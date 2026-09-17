@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+**/dist
+coverage
+output
+.playwright-cli
+**/.env
+**/.env.*
+package-lock.json
+*.log
