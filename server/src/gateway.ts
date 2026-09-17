@@ -1,7 +1,26 @@
 import type { Config } from './config.js'
 import { HttpError } from './errors.js'
 
-export type Prompt = { role: 'user' | 'assistant'; content: string }
+export type Prompt = {
+  role: 'user' | 'assistant'
+  content:
+    string | ({ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } })[]
+}
+
+export function imagePrompt(text: string, images: Buffer[]): Prompt {
+  return {
+    role: 'user',
+    content: images.length
+      ? [
+          { type: 'text', text: text || 'Опиши изображение.' },
+          ...images.map((image) => ({
+            type: 'image_url' as const,
+            image_url: { url: `data:image/webp;base64,${image.toString('base64')}` },
+          })),
+        ]
+      : text,
+  }
+}
 
 export async function complete(
   messages: Prompt[],

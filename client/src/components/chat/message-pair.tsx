@@ -1,6 +1,7 @@
 import { Bot, UserRound } from 'lucide-react'
 import type { Message, PendingMessage } from '@/types/chat'
 import { MessageTime } from './message-time'
+import { MessageImages } from './message-images'
 
 export function MessagePair({ message, animate = false }: { message: Message; animate?: boolean }) {
   return (
@@ -11,6 +12,7 @@ export function MessagePair({ message, animate = false }: { message: Message; an
           <span>Вы</span>
         </div>
         <div className="whitespace-pre-wrap break-words">{message.user_message}</div>
+        <MessageImages sources={(message.image_ids ?? []).map((id) => `/api/images/${id}`)} />
         <div className="mt-1 text-right">
           {/* Older rows only have the time the completed pair was saved. */}
           <MessageTime
@@ -40,6 +42,7 @@ export function PendingReply({ message }: { message: PendingMessage }) {
           <span>Вы</span>
         </div>
         <div className="whitespace-pre-wrap break-words">{message.text}</div>
+        <MessageImages sources={message.images ?? []} />
         <div className="mt-1 text-right">
           <MessageTime value={message.sentAt} label="Отправлено" />
         </div>

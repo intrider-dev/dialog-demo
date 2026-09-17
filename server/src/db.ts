@@ -1,6 +1,9 @@
 import pg from 'pg'
 import { HttpError } from './errors.js'
 import type { Prompt } from './gateway.js'
+import { imagePrompt } from './gateway.js'
+import type { PreparedImage } from './images.js'
+import { randomUUID } from 'node:crypto'
 
 export type Message = {
   request_id: string | null
@@ -8,10 +11,12 @@ export type Message = {
   ai_message: string
   sent_at: Date | null
   created_at: Date
+  image_ids: string[]
+  image_hashes: string[]
 }
 // Legacy created_at is a UTC timestamp without zone; make that explicit in the API.
 const columns =
-  "request_id, user_message, ai_message, sent_at, created_at AT TIME ZONE 'UTC' AS created_at"
+  "request_id, user_message, ai_message, sent_at, image_ids, image_hashes, created_at AT TIME ZONE 'UTC' AS created_at"
 
 export function createStore(databaseUrl: string) {
   const pool = new pg.Pool({
@@ -28,6 +33,9 @@ export function createStore(databaseUrl: string) {
         CREATE TABLE IF NOT EXISTS messages (session_id uuid, user_message text, ai_message text, created_at timestamp);
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS request_id uuid;
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_at timestamptz;
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_ids uuid[] NOT NULL DEFAULT '{}';
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_hashes text[] NOT NULL DEFAULT '{}';
+        CREATE TABLE IF NOT EXISTS message_images (id uuid PRIMARY KEY, session_id uuid NOT NULL, data bytea NOT NULL);
         CREATE INDEX IF NOT EXISTS messages_session_created_idx ON messages(session_id, created_at);
         CREATE UNIQUE INDEX IF NOT EXISTS messages_request_idx ON messages(session_id, request_id) WHERE request_id IS NOT NULL;
         CREATE TABLE IF NOT EXISTS request_limits (name text PRIMARY KEY, started_at timestamptz NOT NULL, count integer NOT NULL);
@@ -35,6 +43,13 @@ export function createStore(databaseUrl: string) {
     },
     async health() {
       await pool.query('SELECT 1')
+    },
+    async image(sessionId: string, id: string): Promise<Buffer | null> {
+      const { rows } = await pool.query(
+        'SELECT data FROM message_images WHERE session_id=$1 AND id=$2',
+        [sessionId, id],
+      )
+      return rows[0]?.data ?? null
     },
     async history(sessionId: string) {
       const { rows } = await pool.query<Message>(
@@ -50,6 +65,8 @@ export function createStore(databaseUrl: string) {
       text: string,
       generate: (context: Prompt[]) => Promise<string>,
       dailyLimit: number,
+      images: PreparedImage[] = [],
+      supportsImages = false,
     ) {
       // Capture receipt before waiting for a connection or a provider response.
       const sentAt = new Date()
@@ -68,7 +85,11 @@ export function createStore(databaseUrl: string) {
           [sessionId, requestId],
         )
         if (existing.rows[0]) {
-          if (existing.rows[0].user_message !== text)
+          if (
+            existing.rows[0].user_message !== text ||
+            JSON.stringify(existing.rows[0].image_hashes) !==
+              JSON.stringify(images.map((image) => image.hash))
+          )
             throw new HttpError(409, 'Этот запрос уже использован.', 'REQUEST_CONFLICT')
           await client.query('COMMIT')
           return existing.rows[0]
@@ -91,18 +112,63 @@ export function createStore(databaseUrl: string) {
            ORDER BY created_at DESC, request_id DESC NULLS LAST LIMIT 20`,
           [sessionId],
         )
-        const context: Prompt[] = previous.rows.reverse().flatMap((row) => [
+        const rows = previous.rows.reverse()
+        const context: Prompt[] = rows.flatMap((row) => [
           { role: 'user' as const, content: row.user_message },
           { role: 'assistant' as const, content: row.ai_message },
         ])
-        while (context.reduce((sum, message) => sum + message.content.length, text.length) > 24000)
+        while (
+          context.reduce((sum, message) => sum + message.content.length, text.length) > 24000
+        ) {
           context.splice(0, 2)
-        const answer = await generate([...context, { role: 'user', content: text }])
+          rows.shift()
+        }
+        // Include at most three images in context, newest first. Text-only models receive text history.
+        let remaining = supportsImages ? 3 - images.length : 0
+        for (let i = rows.length - 1; i >= 0 && remaining > 0; i--) {
+          const ids = rows[i]!.image_ids.slice(-remaining)
+          if (!ids.length) continue
+          const stored = await client.query<{ id: string; data: Buffer }>(
+            'SELECT id, data FROM message_images WHERE session_id=$1 AND id=ANY($2::uuid[])',
+            [sessionId, ids],
+          )
+          const buffers = ids.flatMap((id) =>
+            stored.rows.filter((row) => row.id === id).map((row) => row.data),
+          )
+          context[i * 2] = imagePrompt(rows[i]!.user_message, buffers)
+          remaining -= buffers.length
+        }
+        const answer = await generate([
+          ...context,
+          imagePrompt(
+            text,
+            images.map((image) => image.data),
+          ),
+        ])
+        const imageIds: string[] = []
+        for (const image of images) {
+          const id = randomUUID()
+          await client.query('INSERT INTO message_images(id,session_id,data) VALUES($1,$2,$3)', [
+            id,
+            sessionId,
+            image.data,
+          ])
+          imageIds.push(id)
+        }
         // Use the same server clock for both timestamps: the Docker host may have a different clock.
         const result = await client.query<Message>(
-          `INSERT INTO messages(session_id, request_id, user_message, ai_message, sent_at, created_at)
-           VALUES($1,$2,$3,$4,$5,timezone('UTC', $6::timestamptz)) RETURNING ${columns}`,
-          [sessionId, requestId, text, answer, sentAt, new Date()],
+          `INSERT INTO messages(session_id, request_id, user_message, ai_message, sent_at, created_at, image_ids, image_hashes)
+           VALUES($1,$2,$3,$4,$5,timezone('UTC', $6::timestamptz),$7,$8) RETURNING ${columns}`,
+          [
+            sessionId,
+            requestId,
+            text,
+            answer,
+            sentAt,
+            new Date(),
+            imageIds,
+            images.map((image) => image.hash),
+          ],
         )
         await client.query('COMMIT')
         return result.rows[0]!

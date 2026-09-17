@@ -15,6 +15,7 @@ export function useChat() {
   const [session, setSession] = useState<Session | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
+  const [images, setImages] = useState<string[]>([])
   const [pending, setPending] = useState<PendingMessage | null>(null)
   const [busy, setBusy] = useState(false)
   const [ready, setReady] = useState(false)
@@ -26,6 +27,7 @@ export function useChat() {
   const version = useRef(0)
   // Keep retries working even when the browser refuses localStorage writes.
   const retry = useRef<{ sessionId: string; request: Pending } | null>(null)
+  const loadedSession = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     if (lock.current) return
@@ -35,6 +37,11 @@ export function useChat() {
     try {
       const current = await getSession()
       if (currentVersion !== version.current) return
+      if (loadedSession.current && loadedSession.current !== current.sessionId) {
+        setDraft('')
+        setImages([])
+      }
+      loadedSession.current = current.sessionId
       setSession(current)
       setMessages(cached(current.sessionId))
       const data = await api<{ sessionId: string; messages: Message[] }>(
@@ -60,7 +67,11 @@ export function useChat() {
         savePending(current.sessionId, null)
         retry.current = null
         setDraft('')
-      } else if (unfinished) setDraft(unfinished.message)
+        setImages([])
+      } else if (unfinished) {
+        setDraft(unfinished.message)
+        setImages(unfinished.images ?? [])
+      }
       setReady(true)
     } catch (e) {
       if (currentVersion === version.current)
@@ -91,7 +102,13 @@ export function useChat() {
   }, [load])
 
   async function send(model?: string) {
-    if (!session?.configured || !ready || lock.current || !draft.trim() || draft.length > 4000)
+    if (
+      !session?.configured ||
+      !ready ||
+      lock.current ||
+      (!draft.trim() && !images.length) ||
+      draft.length > 4000
+    )
       return
     lock.current = true
     version.current++
@@ -101,15 +118,23 @@ export function useChat() {
         ? retry.current.request
         : pendingRequest(session.sessionId)
     const request =
-      previous?.message === text && previous.model === model
+      previous?.message === text &&
+      previous.model === model &&
+      JSON.stringify(previous.images ?? []) === JSON.stringify(images)
         ? previous
-        : { requestId: crypto.randomUUID(), message: text, ...(model ? { model } : {}) }
+        : {
+            requestId: crypto.randomUUID(),
+            message: text,
+            ...(model ? { model } : {}),
+            ...(images.length ? { images } : {}),
+          }
     savePending(session.sessionId, request)
     retry.current = { sessionId: session.sessionId, request }
     setBusy(true)
     setError('')
-    setPending({ text, sentAt: new Date().toISOString() })
+    setPending({ text, sentAt: new Date().toISOString(), images })
     setDraft('')
+    setImages([])
     try {
       const result = await api<{ sessionId: string; message: Message }>(
         'messages',
@@ -129,6 +154,7 @@ export function useChat() {
       retry.current = null
     } catch (e) {
       setDraft(text)
+      setImages(images)
       setError(e instanceof Error ? e.message : 'Ошибка соединения.')
       if (e instanceof ApiError && e.code === 'SESSION_CHANGED') {
         setSession(null)
@@ -152,6 +178,7 @@ export function useChat() {
       setSession(current)
       setMessages([])
       setDraft('')
+      setImages([])
       setAnimateId(null)
       retry.current = null
       save(current.sessionId, [])
@@ -177,6 +204,8 @@ export function useChat() {
     messages,
     draft,
     setDraft,
+    images,
+    setImages,
     pending,
     busy,
     ready,

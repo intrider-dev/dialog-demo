@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react'
 import { Popover } from 'radix-ui'
 import { Command } from 'cmdk'
-import { Check, ChevronDown, Cpu, Search } from 'lucide-react'
+import { Check, ChevronDown, Cpu, Search, ImageIcon } from 'lucide-react'
 import { api } from '@/lib/chat'
 import { Button } from '@/components/ui/button'
+import type { Model } from '@/types/chat'
 
-type Catalog = { models: { id: string; name: string }[]; defaultModel: string }
+type Catalog = { models: Model[]; defaultModel: string }
 
 export function ModelPicker({
   value,
   onChange,
   disabled,
+  requireImages = false,
 }: {
   value?: string
-  onChange: (model: string) => void
+  onChange: (model: string, supportsImages?: boolean) => void
   disabled: boolean
+  requireImages?: boolean
 }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [error, setError] = useState('')
@@ -46,7 +49,11 @@ export function ModelPicker({
           data.models.find((model) => model.id === saved)?.id ??
           data.models.find((model) => model.id === data.defaultModel)?.id ??
           data.models[0]?.id
-        if (initial) onChange(initial)
+        if (initial)
+          onChange(
+            initial,
+            Boolean(data.models.find((model) => model.id === initial)?.supportsImages),
+          )
       },
       (reason: unknown) => {
         if (active)
@@ -148,9 +155,10 @@ export function ModelPicker({
                     key={model.id}
                     value={model.id}
                     keywords={[model.name]}
+                    disabled={requireImages && !model.supportsImages}
                     title={model.id}
                     onSelect={() => {
-                      onChange(model.id)
+                      onChange(model.id, Boolean(model.supportsImages))
                       setOpen(false)
                       try {
                         localStorage.setItem('chat-model', model.id)
@@ -158,7 +166,7 @@ export function ModelPicker({
                         /* Selection remains available in memory. */
                       }
                     }}
-                    className="relative cursor-pointer rounded-lg py-2.5 pr-3 pl-8 text-sm outline-none data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+                    className="relative cursor-pointer rounded-lg py-2.5 pr-3 pl-8 text-sm outline-none data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground data-[disabled=true]:opacity-40 data-[disabled=true]:cursor-not-allowed"
                   >
                     {model.id === value && (
                       <Check
@@ -167,7 +175,15 @@ export function ModelPicker({
                         aria-hidden="true"
                       />
                     )}
-                    <div className="truncate">{model.name}</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate">{model.name}</span>
+                      {model.supportsImages && (
+                        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                          <ImageIcon className="size-3" aria-hidden="true" />
+                          Изображения
+                        </span>
+                      )}
+                    </div>
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">{model.id}</div>
                   </Command.Item>
                 ))}

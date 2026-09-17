@@ -1,4 +1,5 @@
 import type { Message, Session, Pending } from '@/types/chat'
+import { isImageData } from './images'
 export class ApiError extends Error {
   code: string
   constructor(message: string, code = 'REQUEST_FAILED') {
@@ -13,6 +14,10 @@ export function isMessage(value: unknown): value is Message {
   return (
     typeof m.user_message === 'string' &&
     typeof m.ai_message === 'string' &&
+    (m.image_ids === undefined ||
+      (Array.isArray(m.image_ids) &&
+        m.image_ids.length <= 3 &&
+        m.image_ids.every((id) => /^[0-9a-f-]{36}$/i.test(id)))) &&
     typeof m.created_at === 'string' &&
     Number.isFinite(Date.parse(m.created_at)) &&
     (m.sent_at == null ||
@@ -42,6 +47,10 @@ export function pendingRequest(id: string): Pending | null {
       typeof data.requestId === 'string' &&
       /^[0-9a-f-]{36}$/i.test(data.requestId) &&
       typeof data.message === 'string' &&
+      (data.images === undefined ||
+        (Array.isArray(data.images) &&
+          data.images.length <= 3 &&
+          data.images.every(isImageData))) &&
       (data.model === undefined || (typeof data.model === 'string' && data.model.length <= 256)) &&
       data.message.length <= 4000
       ? data

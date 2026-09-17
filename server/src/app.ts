@@ -9,6 +9,7 @@ import type { Store } from './db.js'
 import { complete, type Prompt } from './gateway.js'
 import { HttpError } from './errors.js'
 import { createModelCatalog } from './models.js'
+import { prepareImages } from './images.js'
 
 export const isUuid = (value: unknown): value is string =>
   typeof value === 'string' &&
@@ -84,7 +85,6 @@ export function createApp(
       throw new HttpError(415, 'Ожидается JSON.')
     next()
   })
-  app.use(express.json({ limit: '24kb' }))
   app.get('/api/models', async (_req, res) => {
     res.json({ models: await listModels(), defaultModel: config.model })
   })
@@ -97,7 +97,10 @@ export function createApp(
       throw new HttpError(409, 'Сессия изменилась. Обновите диалог.', 'SESSION_CHANGED')
     const sessionId = isUuid(cookie) ? cookie : randomUUID()
     if (bootstrap) res.cookie('session_id', `${sessionId}.${Date.now()}`, cookieOptions)
-    else if (req.get('X-Session-Id') !== sessionId)
+    else if (
+      !(req.method === 'GET' && /^\/images\/[0-9a-f-]{36}$/i.test(req.path)) &&
+      req.get('X-Session-Id') !== sessionId
+    )
       throw new HttpError(
         409,
         'Сессия изменилась в другой вкладке. Обновите диалог.',
@@ -105,6 +108,18 @@ export function createApp(
       )
     res.locals.sessionId = sessionId
     next()
+  })
+  const messageBody = express.json({ limit: '9mb', inflate: false })
+  const smallBody = express.json({ limit: '24kb', inflate: false })
+  app.use((req, res, next) =>
+    (req.path === '/api/messages' ? messageBody : smallBody)(req, res, next),
+  )
+  // Image elements send the signed cookie but cannot add X-Session-Id; ownership is checked in SQL.
+  app.get('/api/images/:id', async (req, res) => {
+    if (!isUuid(req.params.id)) throw new HttpError(404, 'Изображение не найдено.')
+    const data = await store.image(res.locals.sessionId, req.params.id)
+    if (!data) throw new HttpError(404, 'Изображение не найдено.')
+    res.type('image/webp').send(data)
   })
   app.get('/api/session', (_req, res) =>
     res.json({ sessionId: res.locals.sessionId, configured: Boolean(config.apiKey) }),
@@ -130,12 +145,14 @@ export function createApp(
       message: { error: 'Слишком много сообщений. Подождите минуту.' },
     }),
     async (req, res) => {
-      const { message, requestId, model } = req.body ?? {}
+      const { message, requestId, model, images } = req.body ?? {}
+      if (!images && Buffer.byteLength(JSON.stringify(req.body ?? {})) > 24 * 1024)
+        throw new HttpError(413, 'Слишком большой запрос.')
       if (model !== undefined && (typeof model !== 'string' || !model || model.length > 256))
         throw new HttpError(400, 'Выберите модель из списка.')
       if (
         typeof message !== 'string' ||
-        !message.trim() ||
+        (!message.trim() && !(Array.isArray(images) && images.length)) ||
         message.length > 4000 ||
         !isUuid(requestId)
       )
@@ -145,14 +162,26 @@ export function createApp(
       activeRequests++
       try {
         const selectedModel = model ?? config.model
-        if (model !== undefined && !(await listModels()).some((item) => item.id === model))
+        const selected =
+          model !== undefined || images?.length
+            ? (await listModels()).find((item) => item.id === selectedModel)
+            : undefined
+        if ((model !== undefined || images?.length) && !selected)
           throw new HttpError(400, 'Модель недоступна. Обновите список моделей.')
+        if (Array.isArray(images) && images.length && !selected?.supportsImages)
+          throw new HttpError(
+            400,
+            'Эта модель не принимает изображения. Выберите модель с пометкой «Изображения».',
+          )
+        const prepared = await prepareImages(images)
         const result = await store.reply(
           res.locals.sessionId,
           requestId,
           message.trim(),
           (messages) => generate(messages, selectedModel),
           config.dailyLimit,
+          prepared,
+          Boolean(selected?.supportsImages),
         )
         res.status(201).json({ sessionId: res.locals.sessionId, message: result })
       } finally {

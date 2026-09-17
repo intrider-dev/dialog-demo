@@ -28,6 +28,34 @@ function Picker() {
   return <ModelPicker value={value} onChange={setValue} disabled={false} />
 }
 
+it('marks image-capable models and prevents switching attachments to a text-only model', async () => {
+  const onChange = vi.fn()
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      Response.json({
+        models: [
+          { id: 'text', name: 'Text', supportsImages: false },
+          { id: 'vision', name: 'Vision', supportsImages: true },
+        ],
+        defaultModel: 'vision',
+      }),
+    ),
+  )
+  render(<ModelPicker value="vision" onChange={onChange} disabled={false} requireImages />)
+  const trigger = screen.getByRole('combobox', { name: 'Модель' })
+  await waitFor(() => expect(trigger).toBeEnabled())
+  expect(onChange).toHaveBeenCalledWith('vision', true)
+  await userEvent.click(trigger)
+  expect(screen.getByRole('option', { name: /Text/ })).toHaveAttribute('aria-disabled', 'true')
+  expect(screen.getByRole('option', { name: /Vision/ })).toHaveTextContent('Изображения')
+  onChange.mockClear()
+  await userEvent.click(screen.getByRole('option', { name: /Text/ }))
+  expect(onChange).not.toHaveBeenCalled()
+  await userEvent.keyboard('{ArrowDown}{Enter}')
+  expect(onChange).toHaveBeenCalledWith('vision', true)
+})
+
 it('selects with the keyboard and persists the choice', async () => {
   vi.stubGlobal(
     'fetch',

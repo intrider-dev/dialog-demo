@@ -10,6 +10,7 @@ import { createStore, type Store } from '../src/db.js'
 import { createApp } from '../src/app.js'
 import { HttpError } from '../src/errors.js'
 import { verifyInstallation } from '../../scripts/setup.mjs'
+import sharp from 'sharp'
 
 try {
   process.loadEnvFile('server/.env')
@@ -59,14 +60,15 @@ beforeAll(async () => {
   await store.init()
   const listening = await listen(
     createApp(config, store, generate, resolve('client/dist'), async () => [
-      { id: 'test/model', name: 'Test model' },
+      { id: 'test/model', name: 'Test model', supportsImages: true },
+      { id: 'text/model', name: 'Text model', supportsImages: false },
     ]),
   )
   server = listening.instance
   base = listening.url
 })
 beforeEach(async () => {
-  await store.pool.query('TRUNCATE messages, request_limits')
+  await store.pool.query('TRUNCATE messages, message_images, request_limits')
   generate.mockReset()
   generate.mockResolvedValue('Answer')
 })
@@ -79,11 +81,80 @@ afterAll(async () => {
 })
 
 describe('database', () => {
+  it('stores private images, retries without duplicates and carries bounded visual context', async () => {
+    const user = await session()
+    const input = await sharp({ create: { width: 40, height: 40, channels: 3, background: 'red' } })
+      .png()
+      .toBuffer()
+    const image = `data:image/png;base64,${input.toString('base64')}`
+    const body = { message: '', requestId: randomUUID(), model: 'test/model', images: [image] }
+    const response = await request('messages', user, body)
+    expect(response.status).toBe(201)
+    const saved = (await response.json()).message
+    expect(saved.image_ids).toHaveLength(1)
+    expect(generate).toHaveBeenLastCalledWith(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Опиши изображение.' },
+            {
+              type: 'image_url',
+              image_url: { url: expect.stringMatching(/^data:image\/webp;base64,/) },
+            },
+          ],
+        },
+      ],
+      'test/model',
+    )
+    const path = `images/${saved.image_ids[0]}`
+    const download = await fetch(`${base}/api/${path}`, { headers: { Cookie: user.cookie } })
+    expect(download.status).toBe(200)
+    expect(download.headers.get('content-type')).toContain('image/webp')
+    expect((await sharp(Buffer.from(await download.arrayBuffer())).metadata()).format).toBe('webp')
+    expect((await request(path, await session())).status).toBe(404)
+    expect((await request(path)).status).toBe(409)
+    expect((await request(path, user, undefined, { Origin: 'https://evil.example' })).status).toBe(
+      403,
+    )
+    expect((await request('images/invalid', user)).status).toBe(404)
+    expect((await request('messages', user, body)).status).toBe(201)
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect((await store.pool.query('SELECT count(*) FROM message_images')).rows[0].count).toBe('1')
+    expect((await request('messages', user, { ...body, images: [] })).status).toBe(400)
+    expect((await request('messages', user, { ...body, message: 'changed' })).status).toBe(409)
+    expect(
+      (await request('messages', user, { ...body, requestId: randomUUID(), model: 'text/model' }))
+        .status,
+    ).toBe(400)
+    const history = (await (await request('messages', user)).json()).messages
+    expect(history[0].image_ids).toEqual(saved.image_ids)
+    expect(JSON.stringify(history)).not.toContain('base64')
+    await request('messages', user, {
+      message: 'Follow up',
+      requestId: randomUUID(),
+      model: 'test/model',
+    })
+    expect(generate.mock.calls.at(-1)?.[0][0].content).toEqual(expect.any(Array))
+    await request('messages', user, {
+      message: 'Text only',
+      requestId: randomUUID(),
+      model: 'text/model',
+    })
+    expect(
+      generate.mock.calls
+        .at(-1)?.[0]
+        .every((message: { content: unknown }) => typeof message.content === 'string'),
+    ).toBe(true)
+  })
   it('lists models separately and passes the selected model to generation', async () => {
     const catalog = await request('models')
     expect(catalog.status).toBe(200)
     expect(await catalog.json()).toEqual({
-      models: [{ id: 'test/model', name: 'Test model' }],
+      models: [
+        { id: 'test/model', name: 'Test model', supportsImages: true },
+        { id: 'text/model', name: 'Text model', supportsImages: false },
+      ],
       defaultModel: config.model,
     })
     const user = await session()
@@ -295,7 +366,11 @@ describe('HTTP and security', () => {
       (
         await fetch(`${base}/api/messages`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: user.cookie,
+            'X-Session-Id': user.id,
+          },
           body: '{bad',
         })
       ).status,

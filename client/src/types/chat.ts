@@ -5,8 +5,10 @@ export type Message = {
   ai_message: string
   sent_at?: string | null
   created_at: string
+  image_ids?: string[]
 }
 
 export type Session = { sessionId: string; configured: boolean }
-export type Pending = { requestId: string; message: string; model?: string }
-export type PendingMessage = { text: string; sentAt: string }
+export type Pending = { requestId: string; message: string; model?: string; images?: string[] }
+export type PendingMessage = { text: string; sentAt: string; images?: string[] }
+export type Model = { id: string; name: string; supportsImages?: boolean }
