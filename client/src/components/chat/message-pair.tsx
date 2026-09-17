@@ -2,6 +2,7 @@ import { Bot, UserRound } from 'lucide-react'
 import type { Message, PendingMessage } from '@/types/chat'
 import { MessageTime } from './message-time'
 import { MessageImages } from './message-images'
+import { Markdown } from './markdown'
 
 export function MessagePair({ message, animate = false }: { message: Message; animate?: boolean }) {
   return (
@@ -27,7 +28,7 @@ export function MessagePair({ message, animate = false }: { message: Message; an
           <span>Ответ</span>
           <MessageTime value={message.created_at} label="Получен ответ" />
         </div>
-        <div className="whitespace-pre-wrap break-words">{message.ai_message}</div>
+        <Markdown>{message.ai_message}</Markdown>
       </article>
     </div>
   )

@@ -171,3 +171,80 @@
     @apply font-sans;
   }
 }
+
+/* Keep generated prose readable without changing the rest of the interface. */
+.markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown p {
+  margin: 0.85em 0;
+}
+.markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.5em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+.markdown h1 {
+  font-size: 1.6em;
+}
+.markdown h2 {
+  font-size: 1.35em;
+}
+.markdown h3 {
+  font-size: 1.15em;
+}
+.markdown strong {
+  font-weight: 600;
+}
+.markdown :is(ul, ol) {
+  margin: 0.85em 0;
+  padding-left: 1.6em;
+}
+.markdown ul {
+  list-style-type: disc;
+}
+.markdown ol {
+  list-style-type: decimal;
+}
+.markdown li {
+  padding-left: 0.3em;
+  margin: 0.35em 0;
+}
+.markdown li > :is(ul, ol) {
+  margin: 0.35em 0;
+}
+.markdown li > p {
+  margin: 0.4em 0;
+}
+.markdown blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 1em;
+  margin: 1.2em 0;
+  color: var(--muted-foreground);
+}
+.markdown :not(pre) > code {
+  border-radius: 0.3rem;
+  background: var(--muted);
+  padding: 0.15em 0.4em;
+  font-size: 0.9em;
+}
+.markdown pre {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.markdown .task-list-item {
+  list-style: none;
+}
+.markdown input[type='checkbox'] {
+  margin-right: 0.5em;
+  accent-color: var(--foreground);
+}
