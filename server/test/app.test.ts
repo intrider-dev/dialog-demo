@@ -57,7 +57,11 @@ beforeAll(async () => {
   url.searchParams.set('options', `-c search_path=${schema}`)
   store = createStore(url.toString())
   await store.init()
-  const listening = await listen(createApp(config, store, generate, resolve('client/dist')))
+  const listening = await listen(
+    createApp(config, store, generate, resolve('client/dist'), async () => [
+      { id: 'test/model', name: 'Test model' },
+    ]),
+  )
   server = listening.instance
   base = listening.url
 })
@@ -75,6 +79,30 @@ afterAll(async () => {
 })
 
 describe('database', () => {
+  it('lists models separately and passes the selected model to generation', async () => {
+    const catalog = await request('models')
+    expect(catalog.status).toBe(200)
+    expect(await catalog.json()).toEqual({
+      models: [{ id: 'test/model', name: 'Test model' }],
+      defaultModel: config.model,
+    })
+    const user = await session()
+    const reply = await request('messages', user, {
+      message: 'Hello',
+      requestId: randomUUID(),
+      model: 'test/model',
+    })
+    expect(reply.status).toBe(201)
+    expect(generate).toHaveBeenCalledWith(expect.any(Array), 'test/model')
+    generate.mockClear()
+    for (const model of [null, '', 5, 'missing/model', 'x'.repeat(257)]) {
+      expect(
+        (await request('messages', user, { message: 'Hello', requestId: randomUUID(), model }))
+          .status,
+      ).toBe(400)
+    }
+    expect(generate).not.toHaveBeenCalled()
+  })
   it('verifies installer settings and database access without calling the provider', async () => {
     const url = new URL(process.env.DATABASE_URL!)
     url.searchParams.set('options', `-c search_path=${schema}`)

@@ -14,6 +14,11 @@ const pair = {
 }
 function mockApi() {
   const fetch = vi.fn(async (path: string, options?: RequestInit) => {
+    if (path.endsWith('/models'))
+      return Response.json({
+        models: [{ id: 'test/model', name: 'Test model' }],
+        defaultModel: 'test/model',
+      })
     if (path.endsWith('/session'))
       return Response.json({
         sessionId: options?.method === 'POST' ? 'new-session' : id,
@@ -44,6 +49,9 @@ describe('chat screen', () => {
     expect(screen.queryByText('Без регистрации')).not.toBeInTheDocument()
     const input = screen.getByRole('textbox')
     await waitFor(() => expect(input).toBeEnabled())
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Модель' })).toHaveTextContent('Test model'),
+    )
     await user.click(screen.getByRole('button', { name: 'Помоги с идеей' }))
     expect(input).toHaveValue('Помоги с идеей')
     await user.clear(input)
@@ -64,6 +72,12 @@ describe('chat screen', () => {
   })
   it('shows startup failure and can reload without losing the typed message', async () => {
     const fetch = mockApi()
+    fetch.mockImplementationOnce(async () =>
+      Response.json({
+        models: [{ id: 'test/model', name: 'Test model' }],
+        defaultModel: 'test/model',
+      }),
+    )
     fetch.mockRejectedValueOnce(new Error('offline'))
     render(<App />)
     await screen.findByRole('alert')

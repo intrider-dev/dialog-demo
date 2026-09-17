@@ -90,7 +90,7 @@ export function useChat() {
     }
   }, [load])
 
-  async function send() {
+  async function send(model?: string) {
     if (!session?.configured || !ready || lock.current || !draft.trim() || draft.length > 4000)
       return
     lock.current = true
@@ -101,7 +101,9 @@ export function useChat() {
         ? retry.current.request
         : pendingRequest(session.sessionId)
     const request =
-      previous?.message === text ? previous : { requestId: crypto.randomUUID(), message: text }
+      previous?.message === text && previous.model === model
+        ? previous
+        : { requestId: crypto.randomUUID(), message: text, ...(model ? { model } : {}) }
     savePending(session.sessionId, request)
     retry.current = { sessionId: session.sessionId, request }
     setBusy(true)

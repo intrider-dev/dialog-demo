@@ -1,10 +1,12 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, MessageSquare, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useChat } from '@/hooks/use-chat'
 import { MessagePair, PendingReply } from '@/components/chat/message-pair'
+import { ModelPicker } from '@/components/chat/model-picker'
 
 function App() {
+  const [model, setModel] = useState<string>()
   const {
     session,
     messages,
@@ -116,9 +118,10 @@ function App() {
           className="mx-auto max-w-3xl"
           onSubmit={(event) => {
             event.preventDefault()
-            void send()
+            void send(model)
           }}
         >
+          <ModelPicker value={model} onChange={setModel} disabled={busy} />
           <div className="composer rounded-2xl border bg-background p-3 shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
             <label htmlFor="message" className="sr-only">
               Ваше сообщение
@@ -136,7 +139,7 @@ function App() {
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault()
-                  void send()
+                  void send(model)
                 }
               }}
             />

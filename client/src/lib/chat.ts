@@ -42,6 +42,7 @@ export function pendingRequest(id: string): Pending | null {
       typeof data.requestId === 'string' &&
       /^[0-9a-f-]{36}$/i.test(data.requestId) &&
       typeof data.message === 'string' &&
+      (data.model === undefined || (typeof data.model === 'string' && data.model.length <= 256)) &&
       data.message.length <= 4000
       ? data
       : null

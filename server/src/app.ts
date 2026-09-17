@@ -8,6 +8,7 @@ import type { Config } from './config.js'
 import type { Store } from './db.js'
 import { complete, type Prompt } from './gateway.js'
 import { HttpError } from './errors.js'
+import { createModelCatalog } from './models.js'
 
 export const isUuid = (value: unknown): value is string =>
   typeof value === 'string' &&
@@ -29,8 +30,10 @@ export function parseSession(value: unknown, now = Date.now()): string | null {
 export function createApp(
   config: Config,
   store: Store,
-  generate: (messages: Prompt[]) => Promise<string> = (messages) => complete(messages, config),
+  generate: (messages: Prompt[], model: string) => Promise<string> = (messages, model) =>
+    complete(messages, { ...config, model }),
   clientDist?: string,
+  listModels = createModelCatalog(config),
 ) {
   const app = express()
   let activeRequests = 0
@@ -82,6 +85,9 @@ export function createApp(
     next()
   })
   app.use(express.json({ limit: '24kb' }))
+  app.get('/api/models', async (_req, res) => {
+    res.json({ models: await listModels(), defaultModel: config.model })
+  })
   app.use(cookieParser(config.secret))
   // The header is not authentication: it catches a stale tab after another tab changes the signed cookie.
   app.use('/api', (req, res, next) => {
@@ -124,7 +130,9 @@ export function createApp(
       message: { error: 'Слишком много сообщений. Подождите минуту.' },
     }),
     async (req, res) => {
-      const { message, requestId } = req.body ?? {}
+      const { message, requestId, model } = req.body ?? {}
+      if (model !== undefined && (typeof model !== 'string' || !model || model.length > 256))
+        throw new HttpError(400, 'Выберите модель из списка.')
       if (
         typeof message !== 'string' ||
         !message.trim() ||
@@ -136,11 +144,14 @@ export function createApp(
       if (activeRequests >= 4) throw new HttpError(503, 'Сервис занят. Попробуйте через минуту.')
       activeRequests++
       try {
+        const selectedModel = model ?? config.model
+        if (model !== undefined && !(await listModels()).some((item) => item.id === model))
+          throw new HttpError(400, 'Модель недоступна. Обновите список моделей.')
         const result = await store.reply(
           res.locals.sessionId,
           requestId,
           message.trim(),
-          generate,
+          (messages) => generate(messages, selectedModel),
           config.dailyLimit,
         )
         res.status(201).json({ sessionId: res.locals.sessionId, message: result })

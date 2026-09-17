@@ -8,5 +8,5 @@ export type Message = {
 }
 
 export type Session = { sessionId: string; configured: boolean }
-export type Pending = { requestId: string; message: string }
+export type Pending = { requestId: string; message: string; model?: string }
 export type PendingMessage = { text: string; sentAt: string }
