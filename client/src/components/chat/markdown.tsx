@@ -101,12 +101,12 @@ const components: Components = {
   tbody: ({ children }) => <TableBody>{children}</TableBody>,
   tr: ({ children }) => <TableRow>{children}</TableRow>,
   th: ({ children, style }) => (
-    <TableHead style={style} className="px-4 py-3 font-semibold">
+    <TableHead style={style} className="border-r last:border-r-0 px-4 py-3 font-semibold">
       {children}
     </TableHead>
   ),
   td: ({ children, style }) => (
-    <TableCell style={style} className="px-4 py-3">
+    <TableCell style={style} className="border-r last:border-r-0 px-4 py-3">
       {children}
     </TableCell>
   ),
