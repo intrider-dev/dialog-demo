@@ -24,6 +24,7 @@ function App() {
     setDraft,
     images,
     setImages,
+    addImages,
     pending,
     busy,
     ready,
@@ -34,7 +35,7 @@ function App() {
     load,
   } = useChat()
   async function attach(files: File[]) {
-    if (!files.length || busy || !ready || readingLock.current) return
+    if (!files.length || busy || !ready || !session || readingLock.current) return
     setImageError('')
     if (!supportsImages) {
       setImageError('Выберите модель с пометкой «Изображения».')
@@ -48,7 +49,7 @@ function App() {
     setReadingImages(true)
     try {
       const loaded = await Promise.all(files.map(readImage))
-      setImages((current) => [...current, ...loaded])
+      addImages(session.sessionId, loaded)
     } catch (error) {
       setImageError(error instanceof Error ? error.message : 'Не удалось загрузить файл.')
     } finally {

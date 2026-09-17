@@ -28,16 +28,20 @@ export function useChat() {
   // Keep retries working even when the browser refuses localStorage writes.
   const retry = useRef<{ sessionId: string; request: Pending } | null>(null)
   const loadedSession = useRef<string | null>(null)
+  const hydratedSession = useRef<string | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (background = false) => {
     if (lock.current) return
     const currentVersion = ++version.current
-    setReady(false)
+    // Returning from the OS file picker fires focus before its change event.
+    // A same-session background refresh must keep the composer available.
+    if (!background) setReady(false)
     setError('')
     try {
       const current = await getSession()
       if (currentVersion !== version.current) return
       if (loadedSession.current && loadedSession.current !== current.sessionId) {
+        setReady(false)
         setDraft('')
         setImages([])
       }
@@ -59,16 +63,22 @@ export function useChat() {
       setMessages(data.messages)
       save(current.sessionId, data.messages)
       const unfinished = pendingRequest(current.sessionId)
-      retry.current = unfinished ? { sessionId: current.sessionId, request: unfinished } : null
+      const restoreDraft = hydratedSession.current !== current.sessionId
+      hydratedSession.current = current.sessionId
+      // Hydrate once per session; focus refreshes must not undo local edits after a failed send.
+      if (restoreDraft)
+        retry.current = unfinished ? { sessionId: current.sessionId, request: unfinished } : null
       if (
         unfinished &&
         data.messages.some((message) => message.request_id === unfinished.requestId)
       ) {
         savePending(current.sessionId, null)
         retry.current = null
-        setDraft('')
-        setImages([])
-      } else if (unfinished) {
+        if (restoreDraft) {
+          setDraft('')
+          setImages([])
+        }
+      } else if (unfinished && restoreDraft) {
         setDraft(unfinished.message)
         setImages(unfinished.images ?? [])
       }
@@ -85,7 +95,7 @@ export function useChat() {
       if (active) void load()
     })
     const refresh = () => {
-      void load()
+      void load(true)
     }
     const onStorage = (event: StorageEvent) => {
       if (event.key === 'chat-session-changed') refresh()
@@ -175,6 +185,8 @@ export function useChat() {
     setError('')
     try {
       const current = await api<Session>('session', {}, session.sessionId)
+      loadedSession.current = current.sessionId
+      hydratedSession.current = current.sessionId
       setSession(current)
       setMessages([])
       setDraft('')
@@ -206,6 +218,10 @@ export function useChat() {
     setDraft,
     images,
     setImages,
+    addImages: (sessionId: string, added: string[]) => {
+      // Ignore file reads that finish after another tab has changed the session.
+      if (loadedSession.current === sessionId) setImages((current) => [...current, ...added])
+    },
     pending,
     busy,
     ready,

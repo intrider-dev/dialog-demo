@@ -101,6 +101,30 @@ it('blocks attachments for text-only models and rejects too many files', async (
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('PNG, JPEG'))
 })
 
+it('keeps a selected file when returning from the file dialog triggers a slow history refresh', async () => {
+  const { fetch, sessionId } = mockApi()
+  render(<App />)
+  const picker = screen.getByLabelText('Выбрать изображения')
+  await waitFor(() => expect(picker).toBeEnabled())
+  let finish!: (response: Response) => void
+  fetch.mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve
+      }),
+  )
+  fireEvent.focus(window)
+  // Windows can restore focus before the file input's change event arrives.
+  fireEvent.change(picker, { target: { files: [file()] } })
+  expect(await screen.findByAltText('Вложение 1')).toHaveAttribute('src', image)
+  await act(async () => finish(Response.json({ sessionId, configured: true })))
+  expect(screen.getByAltText('Вложение 1')).toHaveAttribute('src', image)
+  await userEvent.click(screen.getByRole('button', { name: 'Отправить сообщение' }))
+  await screen.findByText('A picture')
+  const request = fetch.mock.calls.find(([, options]) => options?.method === 'POST')
+  expect(JSON.parse(request![1]!.body as string).images).toEqual([image])
+})
+
 it('retains attachments on failure, retries with the same ID and resets them for a new session', async () => {
   const { fetch, sessionId } = mockApi()
   const { result } = renderHook(() => useChat())
@@ -124,4 +148,49 @@ it('reports file read failures without leaving a pending read', async () => {
     queueMicrotask(() => this.onerror?.(new ProgressEvent('error') as ProgressEvent<FileReader>))
   })
   await expect(readImage(file())).rejects.toThrow('Не удалось прочитать файл.')
+})
+
+it('does not restore old retry attachments over edits when focus returns', async () => {
+  const { fetch } = mockApi()
+  const { result } = renderHook(() => useChat())
+  await waitFor(() => expect(result.current.ready).toBe(true))
+  act(() => {
+    result.current.setDraft('First')
+    result.current.setImages([image])
+  })
+  fetch.mockRejectedValueOnce(new Error('offline'))
+  await act(() => result.current.send('vision/model'))
+  act(() => {
+    result.current.setDraft('Edited')
+    result.current.setImages([])
+  })
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(result.current.draft).toBe('Edited')
+  expect(result.current.images).toEqual([])
+})
+
+it('keeps attachments in a new dialog on focus but discards reads belonging to a replaced session', async () => {
+  const { fetch } = mockApi()
+  const { result } = renderHook(() => useChat())
+  await waitFor(() => expect(result.current.ready).toBe(true))
+  const nextId = crypto.randomUUID()
+  fetch.mockImplementation(async (path) =>
+    path.endsWith('/session')
+      ? Response.json({ sessionId: nextId, configured: true })
+      : Response.json({ sessionId: nextId, messages: [] }),
+  )
+  await act(() => result.current.newSession())
+  act(() => result.current.addImages(nextId, [image]))
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(result.current.images).toEqual([image])
+  const changedId = crypto.randomUUID()
+  fetch.mockImplementation(async (path) =>
+    path.endsWith('/session')
+      ? Response.json({ sessionId: changedId, configured: true })
+      : Response.json({ sessionId: changedId, messages: [] }),
+  )
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(result.current.images).toEqual([])
+  act(() => result.current.addImages(nextId, [image]))
+  expect(result.current.images).toEqual([])
 })
