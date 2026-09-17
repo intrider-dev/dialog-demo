@@ -54,17 +54,20 @@ describe('chat screen', () => {
     })
     fireEvent.scroll(main)
     expect(screen.getByRole('button', { name: 'К последним сообщениям' })).toBeVisible()
-    vi.mocked(Element.prototype.scrollIntoView).mockClear()
+    vi.mocked(Element.prototype.scrollTo).mockClear()
     const calls = fetch.mock.calls.length
     fireEvent.focus(window)
     await waitFor(() => expect(fetch.mock.calls.length).toBeGreaterThan(calls))
     await act(async () => {})
-    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+    expect(Element.prototype.scrollTo).not.toHaveBeenCalled()
     await userEvent.click(screen.getByRole('button', { name: 'К последним сообщениям' }))
-    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({
-      block: 'end',
+    expect(Element.prototype.scrollTo).toHaveBeenLastCalledWith({
+      top: 2000,
       behavior: 'smooth',
     })
+    main.scrollTop = 1468
+    fireEvent.scroll(main)
+    expect(screen.getByRole('button', { name: 'К последним сообщениям' })).toBeVisible()
     main.scrollTop = 1500
     fireEvent.scroll(main)
     expect(screen.queryByRole('button', { name: 'К последним сообщениям' })).not.toBeInTheDocument()
@@ -72,8 +75,8 @@ describe('chat screen', () => {
     fireEvent.scroll(main)
     vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList)
     await userEvent.click(screen.getByRole('button', { name: 'К последним сообщениям' }))
-    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({
-      block: 'end',
+    expect(Element.prototype.scrollTo).toHaveBeenLastCalledWith({
+      top: 2000,
       behavior: 'instant',
     })
   })

@@ -65,21 +65,22 @@ function App() {
   }
   const following = useRef(true)
   const [showScrollDown, setShowScrollDown] = useState(false)
-  const bottom = useRef<HTMLDivElement>(null)
+  const chatScroll = useRef<HTMLElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   function scrollDown(smooth = true) {
     following.current = true
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    bottom.current?.scrollIntoView({
-      block: 'end',
+    chatScroll.current?.scrollTo({
+      top: chatScroll.current.scrollHeight,
       behavior: smooth && !reduced ? 'smooth' : 'instant',
     })
   }
   function trackScroll(event: React.UIEvent<HTMLElement>) {
     const { scrollHeight, clientHeight, scrollTop } = event.currentTarget
-    const nearBottom = scrollHeight - clientHeight - scrollTop < 80
+    const remaining = scrollHeight - clientHeight - scrollTop
+    const nearBottom = remaining < 80
     following.current = nearBottom
-    setShowScrollDown(!nearBottom)
+    setShowScrollDown(remaining > 1)
   }
   useEffect(() => {
     following.current = true
@@ -113,6 +114,7 @@ function App() {
         </div>
       </header>
       <main
+        ref={chatScroll}
         id="chat-messages"
         className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-8"
         aria-label="Переписка"
@@ -173,7 +175,6 @@ function App() {
               Сервис пока не настроен. Отправка сообщений станет доступна после подключения.
             </p>
           )}
-          <div ref={bottom} />
         </div>
       </main>
       <footer className="chat-footer relative z-10 bg-background px-4 pb-4 pt-3 sm:px-8">

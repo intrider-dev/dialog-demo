@@ -9,6 +9,7 @@ beforeEach(() => {
     value: vi.fn(() => ({ matches: false })),
   })
   Element.prototype.scrollIntoView = vi.fn()
+  Element.prototype.scrollTo = vi.fn()
 })
 afterEach(() => {
   cleanup()
