@@ -161,6 +161,26 @@
 }
 
 @layer base {
+  :is(
+      button,
+      a[href],
+      summary,
+      select,
+      [role='button'],
+      [role='option'],
+      [role='tab'],
+      [role='menuitem'],
+      input[type='file'],
+      input[type='checkbox'],
+      input[type='radio'],
+      label[for],
+      [data-slot='dialog-overlay']
+    ):not(:disabled):not([aria-disabled='true']):not([data-disabled='true']) {
+    cursor: pointer;
+  }
+  input[type='file']::file-selector-button {
+    cursor: pointer;
+  }
   * {
     @apply border-border outline-ring/50;
   }
