@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Select } from 'radix-ui'
-import { Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { Popover } from 'radix-ui'
+import { Command } from 'cmdk'
+import { Check, ChevronDown, Cpu, Search } from 'lucide-react'
 import { api } from '@/lib/chat'
 import { Button } from '@/components/ui/button'
 
@@ -18,6 +19,7 @@ export function ModelPicker({
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
+  const [open, setOpen] = useState(false)
   useEffect(() => {
     let active = true
     void api<Catalog>('models').then(
@@ -75,66 +77,105 @@ export function ModelPicker({
     )
   return (
     <div className="mb-3 flex min-w-0 items-center gap-2">
-      <span id="model-label" className="text-xs text-muted-foreground">
+      <span
+        id="model-label"
+        className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+      >
+        <Cpu className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
         Модель
       </span>
-      <Select.Root
-        value={value ?? ''}
-        disabled={disabled || !catalog}
-        onValueChange={(model) => {
-          // The hidden form select can emit an empty value while its options mount.
-          if (!model) return
-          onChange(model)
-          try {
-            localStorage.setItem('chat-model', model)
-          } catch {
-            /* Selection remains available in memory. */
-          }
-        }}
-      >
-        <Select.Trigger
+      <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+        <Popover.Trigger
+          type="button"
+          role="combobox"
+          aria-expanded={open && !disabled}
+          disabled={disabled || !catalog}
           aria-labelledby="model-label"
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault()
+              setOpen(true)
+            }
+          }}
           className="flex min-w-0 max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
           <span className="truncate">
-            <Select.Value placeholder="Загрузка моделей…" />
+            {catalog?.models.find((model) => model.id === value)?.name ?? 'Загрузка моделей…'}
           </span>
-          <Select.Icon>
-            <ChevronDown className="size-3 shrink-0" />
-          </Select.Icon>
-        </Select.Trigger>
-        <Select.Portal>
-          <Select.Content
-            position="popper"
+          <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} aria-hidden="true" />
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            aria-label="Выбор модели"
             side="top"
+            align="start"
             sideOffset={8}
-            className="z-50 max-h-[min(20rem,var(--radix-select-content-available-height))] w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg"
+            collisionPadding={16}
+            className="z-50 w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg"
           >
-            <Select.ScrollUpButton className="flex justify-center py-1">
-              <ChevronUp className="size-4" />
-            </Select.ScrollUpButton>
-            <Select.Viewport className="max-h-72 overflow-y-auto p-1">
-              {catalog?.models.map((model) => (
-                <Select.Item
-                  key={model.id}
-                  value={model.id}
-                  title={model.id}
-                  className="relative cursor-default rounded-md py-2 pr-3 pl-7 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
-                >
-                  <Select.ItemIndicator className="absolute left-2 top-2.5">
-                    <Check className="size-3" />
-                  </Select.ItemIndicator>
-                  <Select.ItemText>{model.name}</Select.ItemText>
-                  <div className="truncate text-xs text-muted-foreground">{model.id}</div>
-                </Select.Item>
-              ))}
-            </Select.Viewport>
-            <Select.ScrollDownButton className="flex justify-center py-1">
-              <ChevronDown className="size-4" />
-            </Select.ScrollDownButton>
-          </Select.Content>
-        </Select.Portal>
-      </Select.Root>
+            <Command
+              label="Поиск модели"
+              defaultValue={value}
+              loop
+              filter={(id, query, keywords) =>
+                `${id} ${keywords?.join(' ') ?? ''}`
+                  .toLowerCase()
+                  .includes(query.trim().toLowerCase())
+                  ? 1
+                  : 0
+              }
+            >
+              <div className="flex items-center gap-2 border-b px-3">
+                <Search
+                  className="size-4 shrink-0 text-muted-foreground"
+                  strokeWidth={1.5}
+                  aria-hidden="true"
+                />
+                <Command.Input
+                  placeholder="Название модели или провайдер…"
+                  className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                />
+              </div>
+              <Command.List
+                label="Модели"
+                className="max-h-[min(18rem,calc(var(--radix-popover-content-available-height)-3rem))] overflow-y-auto overscroll-contain p-1"
+              >
+                <Command.Empty className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  <p role="status">Модели не найдены. Попробуйте другой запрос.</p>
+                </Command.Empty>
+                {catalog?.models.map((model) => (
+                  <Command.Item
+                    key={model.id}
+                    value={model.id}
+                    keywords={[model.name]}
+                    title={model.id}
+                    onSelect={() => {
+                      onChange(model.id)
+                      setOpen(false)
+                      try {
+                        localStorage.setItem('chat-model', model.id)
+                      } catch {
+                        /* Selection remains available in memory. */
+                      }
+                    }}
+                    className="relative cursor-pointer rounded-lg py-2.5 pr-3 pl-8 text-sm outline-none data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+                  >
+                    {model.id === value && (
+                      <Check
+                        className="absolute left-2.5 top-3.5 size-3.5"
+                        strokeWidth={1.5}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <div className="truncate">{model.name}</div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">{model.id}</div>
+                  </Command.Item>
+                ))}
+              </Command.List>
+            </Command>
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
     </div>
   )
 }

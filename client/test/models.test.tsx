@@ -1,6 +1,7 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import { ModelPicker } from '../src/components/chat/model-picker'
 import { useChat } from '../src/hooks/use-chat'
 
@@ -11,6 +12,17 @@ const catalog = {
   ],
   defaultModel: 'a',
 }
+beforeEach(() => {
+  // jsdom has no layout observer; browser checks cover the popup's actual sizing.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  )
+})
 function Picker() {
   const [value, setValue] = useState<string>()
   return <ModelPicker value={value} onChange={setValue} disabled={false} />
@@ -25,10 +37,50 @@ it('selects with the keyboard and persists the choice', async () => {
   const trigger = screen.getByRole('combobox')
   await waitFor(() => expect(trigger).toHaveTextContent('Alpha'))
   fireEvent.keyDown(trigger, { key: 'ArrowDown' })
-  const option = await screen.findByRole('option', { name: 'Beta' })
-  fireEvent.keyDown(option, { key: 'Enter' })
+  const input = await screen.findByRole('combobox', { name: 'Поиск модели' })
+  expect(input).toHaveFocus()
+  await userEvent.keyboard('{ArrowDown}{Enter}')
   await waitFor(() => expect(trigger).toHaveTextContent('Beta'))
   expect(localStorage.getItem('chat-model')).toBe('b')
+  await waitFor(() => expect(trigger).toHaveFocus())
+})
+
+it('searches names and IDs without case sensitivity, shows empty results and resets on reopen', async () => {
+  const fetch = vi.fn(async () =>
+    Response.json({
+      models: [
+        { id: 'vendor/one', name: 'Alpha' },
+        { id: 'other/two', name: 'Beta' },
+      ],
+      defaultModel: 'vendor/one',
+    }),
+  )
+  vi.stubGlobal('fetch', fetch)
+  render(<Picker />)
+  const trigger = screen.getByRole('combobox', { name: 'Модель' })
+  await waitFor(() => expect(trigger).toHaveTextContent('Alpha'))
+  expect(document.querySelector('#model-label svg')).toBeInTheDocument()
+  await userEvent.click(trigger)
+  const search = screen.getByRole('combobox', { name: 'Поиск модели' })
+  await userEvent.type(search, '  bETA  ')
+  expect(screen.getAllByRole('option')).toHaveLength(1)
+  expect(screen.getByRole('option')).toHaveTextContent('Beta')
+  await userEvent.clear(search)
+  await userEvent.type(search, 'vendor/ONE')
+  expect(screen.getAllByRole('option')).toHaveLength(1)
+  expect(screen.getByRole('option')).toHaveTextContent('Alpha')
+  await userEvent.clear(search)
+  await userEvent.type(search, 'missing')
+  expect(screen.queryAllByRole('option')).toHaveLength(0)
+  expect(screen.getByRole('status')).toHaveTextContent('Модели не найдены')
+  await userEvent.keyboard('{Escape}')
+  expect(trigger).toHaveTextContent('Alpha')
+  await userEvent.click(trigger)
+  expect(screen.getByRole('combobox', { name: 'Поиск модели' })).toHaveValue('')
+  expect(screen.getAllByRole('option')).toHaveLength(2)
+  await userEvent.click(screen.getByRole('option', { name: /Beta/ }))
+  expect(trigger).toHaveTextContent('Beta')
+  expect(fetch).toHaveBeenCalledTimes(1)
 })
 
 it('restores a saved model and falls back when that model disappears', async () => {
