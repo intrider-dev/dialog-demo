@@ -2,6 +2,7 @@ import { Bot, UserRound, FileText } from 'lucide-react'
 import type { Message, PendingMessage } from '@/types/chat'
 import { MessageTime } from './message-time'
 import { MessageImages } from './message-images'
+import { MessageDocument } from './message-document'
 import { Markdown } from './markdown'
 
 export function MessagePair({ message, animate = false }: { message: Message; animate?: boolean }) {
@@ -14,15 +15,7 @@ export function MessagePair({ message, animate = false }: { message: Message; an
         </div>
         <div className="whitespace-pre-wrap break-words">{message.user_message}</div>
         {message.documents?.map((document) => (
-          <a
-            key={document.id}
-            href={`/api/documents/${document.id}`}
-            download
-            className="mt-2 flex items-center gap-2 break-all rounded-lg border p-2 text-xs underline underline-offset-4"
-          >
-            <FileText className="size-4 shrink-0" aria-hidden="true" />
-            {document.name}
-          </a>
+          <MessageDocument key={document.id} document={document} />
         ))}
         <MessageImages sources={(message.image_ids ?? []).map((id) => `/api/images/${id}`)} />
         <div className="mt-1 text-right">

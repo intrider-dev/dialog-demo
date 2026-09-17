@@ -126,7 +126,15 @@ export function createApp(
     if (!isUuid(req.params.id)) throw new HttpError(404, 'Документ не найден.')
     const document = await store.document(res.locals.sessionId, req.params.id)
     if (!document) throw new HttpError(404, 'Документ не найден.')
-    res.attachment(document.name).type('application/octet-stream').send(document.data)
+    res.attachment(document.name)
+    if (req.query.preview === '1' && /\.pdf$/i.test(document.name)) {
+      res.setHeader(
+        'Content-Disposition',
+        String(res.getHeader('Content-Disposition')).replace(/^attachment/, 'inline'),
+      )
+      res.type('application/pdf')
+    } else res.type('application/octet-stream')
+    res.send(document.data)
   })
   app.get('/api/session', (_req, res) =>
     res.json({ sessionId: res.locals.sessionId, configured: Boolean(config.apiKey) }),
