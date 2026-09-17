@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Popover } from 'radix-ui'
 import { Command } from 'cmdk'
-import { Check, ChevronDown, Cpu, Search, ImageIcon } from 'lucide-react'
+import { Check, ChevronDown, Cpu, Search, ImageIcon, FileText } from 'lucide-react'
 import { api } from '@/lib/chat'
 import { Button } from '@/components/ui/button'
 import type { Model } from '@/types/chat'
@@ -13,11 +13,13 @@ export function ModelPicker({
   onChange,
   disabled,
   requireImages = false,
+  requireDocuments = false,
 }: {
   value?: string
-  onChange: (model: string, supportsImages?: boolean) => void
+  onChange: (model: string, supportsImages?: boolean, supportsDocuments?: boolean) => void
   disabled: boolean
   requireImages?: boolean
+  requireDocuments?: boolean
 }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [error, setError] = useState('')
@@ -53,6 +55,7 @@ export function ModelPicker({
           onChange(
             initial,
             Boolean(data.models.find((model) => model.id === initial)?.supportsImages),
+            Boolean(data.models.find((model) => model.id === initial)?.supportsDocuments),
           )
       },
       (reason: unknown) => {
@@ -155,10 +158,17 @@ export function ModelPicker({
                     key={model.id}
                     value={model.id}
                     keywords={[model.name]}
-                    disabled={requireImages && !model.supportsImages}
+                    disabled={
+                      (requireImages && !model.supportsImages) ||
+                      (requireDocuments && !model.supportsDocuments)
+                    }
                     title={model.id}
                     onSelect={() => {
-                      onChange(model.id, Boolean(model.supportsImages))
+                      onChange(
+                        model.id,
+                        Boolean(model.supportsImages),
+                        Boolean(model.supportsDocuments),
+                      )
                       setOpen(false)
                       try {
                         localStorage.setItem('chat-model', model.id)
@@ -177,12 +187,18 @@ export function ModelPicker({
                     )}
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate">{model.name}</span>
-                      {model.supportsImages && (
-                        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                          <ImageIcon className="size-3" aria-hidden="true" />
-                          Изображения
-                        </span>
-                      )}
+                      <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                        {model.supportsDocuments && (
+                          <span title="Документы PDF" role="img" aria-label="Документы PDF">
+                            <FileText className="size-3.5" aria-hidden="true" />
+                          </span>
+                        )}
+                        {model.supportsImages && (
+                          <span title="Изображения" role="img" aria-label="Изображения">
+                            <ImageIcon className="size-3" aria-hidden="true" />
+                          </span>
+                        )}
+                      </span>
                     </div>
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">{model.id}</div>
                   </Command.Item>

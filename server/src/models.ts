@@ -1,7 +1,12 @@
 import type { Config } from './config.js'
 import { HttpError } from './errors.js'
 
-export type Model = { id: string; name: string; supportsImages?: boolean }
+export type Model = {
+  id: string
+  name: string
+  supportsImages?: boolean
+  supportsDocuments?: boolean
+}
 
 // Share in-flight requests and cache the catalog without tying it to a user session.
 export function createModelCatalog(config: Pick<Config, 'baseUrl' | 'timeoutMs'>) {
@@ -41,6 +46,9 @@ export function createModelCatalog(config: Pick<Config, 'baseUrl' | 'timeoutMs'>
           unique.set(model.id, {
             id: model.id,
             name: typeof model.name === 'string' && model.name ? model.name : model.id,
+            supportsDocuments:
+              Array.isArray(model.architecture?.input_modalities) &&
+              model.architecture.input_modalities.includes('file'),
             supportsImages:
               Array.isArray(model.architecture?.input_modalities) &&
               model.architecture.input_modalities.includes('image'),

@@ -60,7 +60,7 @@ beforeAll(async () => {
   await store.init()
   const listening = await listen(
     createApp(config, store, generate, resolve('client/dist'), async () => [
-      { id: 'test/model', name: 'Test model', supportsImages: true },
+      { id: 'test/model', name: 'Test model', supportsImages: true, supportsDocuments: true },
       { id: 'text/model', name: 'Text model', supportsImages: false },
     ]),
   )
@@ -68,7 +68,7 @@ beforeAll(async () => {
   base = listening.url
 })
 beforeEach(async () => {
-  await store.pool.query('TRUNCATE messages, message_images, request_limits')
+  await store.pool.query('TRUNCATE messages, message_images, message_documents, request_limits')
   generate.mockReset()
   generate.mockResolvedValue('Answer')
 })
@@ -152,7 +152,7 @@ describe('database', () => {
     expect(catalog.status).toBe(200)
     expect(await catalog.json()).toEqual({
       models: [
-        { id: 'test/model', name: 'Test model', supportsImages: true },
+        { id: 'test/model', name: 'Test model', supportsImages: true, supportsDocuments: true },
         { id: 'text/model', name: 'Text model', supportsImages: false },
       ],
       defaultModel: config.model,
@@ -465,4 +465,81 @@ describe('HTTP and security', () => {
       await Promise.all(pending)
     }
   })
+})
+
+it('stores private documents, enforces capabilities and carries compatible history on retries', async () => {
+  const user = await session()
+  const documents = [
+    {
+      name: 'Отчёт.pdf',
+      data:
+        'data:application/octet-stream;base64,' + Buffer.from('%PDF-1.7\n%%EOF').toString('base64'),
+    },
+    {
+      name: 'notes.txt',
+      data: 'data:application/octet-stream;base64,' + Buffer.from('Important').toString('base64'),
+    },
+  ]
+  const body = { message: '', model: 'test/model', requestId: randomUUID(), documents }
+  expect((await request('messages', user, { ...body, model: 'text/model' })).status).toBe(400)
+  expect(generate).not.toHaveBeenCalled()
+  const response = await request('messages', user, body)
+  expect(response.status).toBe(201)
+  const saved = (await response.json()).message
+  expect(saved.documents).toHaveLength(2)
+  expect(saved.documents[0]).toEqual({ id: expect.any(String), name: 'Отчёт.pdf' })
+  const path = `documents/${saved.documents[0].id}`
+  const download = await fetch(`${base}/api/${path}`, { headers: { Cookie: user.cookie } })
+  expect(download.status).toBe(200)
+  expect(download.headers.get('content-disposition')).toContain('attachment;')
+  expect(await download.text()).toBe('%PDF-1.7\n%%EOF')
+  expect((await request(path, await session())).status).toBe(404)
+  expect((await request('documents/invalid', user)).status).toBe(404)
+  expect((await request(`documents/${randomUUID()}`, user)).status).toBe(404)
+  expect((await request('messages', user, body)).status).toBe(201)
+  expect(generate).toHaveBeenCalledTimes(1)
+  expect(
+    (
+      await request('messages', user, {
+        ...body,
+        documents: [{ ...documents[0], name: 'renamed.pdf' }],
+      })
+    ).status,
+  ).toBe(409)
+  expect(
+    (
+      await request('messages', user, {
+        message: 'Continue',
+        requestId: randomUUID(),
+        model: 'test/model',
+      })
+    ).status,
+  ).toBe(201)
+  expect(generate.mock.calls.at(-1)[0][0].content).toEqual(
+    expect.arrayContaining([expect.objectContaining({ type: 'file' })]),
+  )
+  expect(
+    (
+      await request('messages', user, {
+        message: 'Text only',
+        requestId: randomUUID(),
+        model: 'text/model',
+      })
+    ).status,
+  ).toBe(201)
+  expect(JSON.stringify(generate.mock.calls.at(-1)[0])).not.toContain('file_data')
+  expect(JSON.stringify(generate.mock.calls.at(-1)[0])).toContain('Important')
+  expect(
+    (
+      await request('messages', user, {
+        ...body,
+        requestId: randomUUID(),
+        model: 'text/model',
+        documents: [documents[1]],
+      })
+    ).status,
+  ).toBe(201)
+  const history = await (await request('messages', user)).json()
+  expect(history.messages[0].documents).toEqual(saved.documents)
+  expect(JSON.stringify(history)).not.toContain('base64')
 })

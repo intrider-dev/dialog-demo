@@ -1,4 +1,4 @@
-import { Bot, UserRound } from 'lucide-react'
+import { Bot, UserRound, FileText } from 'lucide-react'
 import type { Message, PendingMessage } from '@/types/chat'
 import { MessageTime } from './message-time'
 import { MessageImages } from './message-images'
@@ -13,6 +13,17 @@ export function MessagePair({ message, animate = false }: { message: Message; an
           <span>Вы</span>
         </div>
         <div className="whitespace-pre-wrap break-words">{message.user_message}</div>
+        {message.documents?.map((document) => (
+          <a
+            key={document.id}
+            href={`/api/documents/${document.id}`}
+            download
+            className="mt-2 flex items-center gap-2 break-all rounded-lg border p-2 text-xs underline underline-offset-4"
+          >
+            <FileText className="size-4 shrink-0" aria-hidden="true" />
+            {document.name}
+          </a>
+        ))}
         <MessageImages sources={(message.image_ids ?? []).map((id) => `/api/images/${id}`)} />
         <div className="mt-1 text-right">
           {/* Older rows only have the time the completed pair was saved. */}
@@ -43,6 +54,12 @@ export function PendingReply({ message }: { message: PendingMessage }) {
           <span>Вы</span>
         </div>
         <div className="whitespace-pre-wrap break-words">{message.text}</div>
+        {message.documents?.map((document, index) => (
+          <div key={index} className="mt-2 flex items-center gap-2 break-all text-xs">
+            <FileText className="size-4 shrink-0" aria-hidden="true" />
+            {document.name}
+          </div>
+        ))}
         <MessageImages sources={message.images ?? []} />
         <div className="mt-1 text-right">
           <MessageTime value={message.sentAt} label="Отправлено" />

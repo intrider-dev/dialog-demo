@@ -168,7 +168,7 @@ it('blocks attachments for text-only models and rejects too many files', async (
   expect(screen.queryByAltText('Вложение 1')).not.toBeInTheDocument()
   vi.mocked(createImageBitmap).mockRejectedValueOnce(new Error('decode'))
   fireEvent.change(picker, {
-    target: { files: [new File(['text'], 'note.txt', { type: 'text/plain' })] },
+    target: { files: [new File(['text'], 'note.bin', { type: 'text/plain' })] },
   })
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('PNG или JPEG'))
 })

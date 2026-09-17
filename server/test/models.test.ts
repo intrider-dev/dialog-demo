@@ -12,7 +12,7 @@ it('normalizes every model, deduplicates, sorts, shares requests and refreshes a
     Response.json({
       data: [
         { id: 'b', name: 'Beta' },
-        { id: 'a', name: 'Alpha', architecture: { input_modalities: ['text', 'image'] } },
+        { id: 'a', name: 'Alpha', architecture: { input_modalities: ['text', 'image', 'file'] } },
         { id: 'b', name: 'Beta' },
         { id: 'c' },
         {},
@@ -26,9 +26,9 @@ it('normalizes every model, deduplicates, sorts, shares requests and refreshes a
   const list = createModelCatalog(config)
   const [first, second] = await Promise.all([list(), list()])
   expect(first).toEqual([
-    { id: 'a', name: 'Alpha', supportsImages: true },
-    { id: 'b', name: 'Beta', supportsImages: false },
-    { id: 'c', name: 'c', supportsImages: false },
+    { id: 'a', name: 'Alpha', supportsImages: true, supportsDocuments: true },
+    { id: 'b', name: 'Beta', supportsImages: false, supportsDocuments: false },
+    { id: 'c', name: 'c', supportsImages: false, supportsDocuments: false },
   ])
   expect(second).toBe(first)
   expect(await list()).toBe(first)
@@ -49,7 +49,9 @@ it.each([{}, { data: [] }, { data: [null, {}] }])(
     vi.stubGlobal('fetch', fetch)
     const list = createModelCatalog(config)
     await expect(list()).rejects.toMatchObject({ status: 502 })
-    expect(await list()).toEqual([{ id: 'ok', name: 'ok', supportsImages: false }])
+    expect(await list()).toEqual([
+      { id: 'ok', name: 'ok', supportsImages: false, supportsDocuments: false },
+    ])
   },
 )
 

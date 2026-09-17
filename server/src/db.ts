@@ -1,7 +1,8 @@
 import pg from 'pg'
 import { HttpError } from './errors.js'
 import type { Prompt } from './gateway.js'
-import { imagePrompt } from './gateway.js'
+import type { PreparedDocument } from './documents.js'
+import { imagePrompt, documentPrompt } from './gateway.js'
 import type { PreparedImage } from './images.js'
 import { randomUUID } from 'node:crypto'
 
@@ -13,10 +14,12 @@ export type Message = {
   created_at: Date
   image_ids: string[]
   image_hashes: string[]
+  documents: { id: string; name: string }[]
+  document_hashes: string[]
 }
 // Legacy created_at is a UTC timestamp without zone; make that explicit in the API.
 const columns =
-  "request_id, user_message, ai_message, sent_at, image_ids, image_hashes, created_at AT TIME ZONE 'UTC' AS created_at"
+  "request_id, user_message, ai_message, sent_at, image_ids, image_hashes, documents, document_hashes, created_at AT TIME ZONE 'UTC' AS created_at"
 
 export function createStore(databaseUrl: string) {
   const pool = new pg.Pool({
@@ -35,6 +38,9 @@ export function createStore(databaseUrl: string) {
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_at timestamptz;
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_ids uuid[] NOT NULL DEFAULT '{}';
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_hashes text[] NOT NULL DEFAULT '{}';
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS documents jsonb NOT NULL DEFAULT '[]';
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS document_hashes text[] NOT NULL DEFAULT '{}';
+        CREATE TABLE IF NOT EXISTS message_documents (id uuid PRIMARY KEY, session_id uuid NOT NULL, name text NOT NULL, data bytea NOT NULL, text_content text);
         CREATE TABLE IF NOT EXISTS message_images (id uuid PRIMARY KEY, session_id uuid NOT NULL, data bytea NOT NULL);
         CREATE INDEX IF NOT EXISTS messages_session_created_idx ON messages(session_id, created_at);
         CREATE UNIQUE INDEX IF NOT EXISTS messages_request_idx ON messages(session_id, request_id) WHERE request_id IS NOT NULL;
@@ -50,6 +56,13 @@ export function createStore(databaseUrl: string) {
         [sessionId, id],
       )
       return rows[0]?.data ?? null
+    },
+    async document(sessionId: string, id: string) {
+      const { rows } = await pool.query<{ name: string; data: Buffer }>(
+        'SELECT name, data FROM message_documents WHERE session_id=$1 AND id=$2',
+        [sessionId, id],
+      )
+      return rows[0] ?? null
     },
     async history(sessionId: string) {
       const { rows } = await pool.query<Message>(
@@ -67,6 +80,8 @@ export function createStore(databaseUrl: string) {
       dailyLimit: number,
       images: PreparedImage[] = [],
       supportsImages = false,
+      documents: PreparedDocument[] = [],
+      supportsDocuments = false,
     ) {
       // Capture receipt before waiting for a connection or a provider response.
       const sentAt = new Date()
@@ -88,7 +103,9 @@ export function createStore(databaseUrl: string) {
           if (
             existing.rows[0].user_message !== text ||
             JSON.stringify(existing.rows[0].image_hashes) !==
-              JSON.stringify(images.map((image) => image.hash))
+              JSON.stringify(images.map((image) => image.hash)) ||
+            JSON.stringify(existing.rows[0].document_hashes) !==
+              JSON.stringify(documents.map((d) => d.hash))
           )
             throw new HttpError(409, 'Этот запрос уже использован.', 'REQUEST_CONFLICT')
           await client.query('COMMIT')
@@ -138,11 +155,40 @@ export function createStore(databaseUrl: string) {
           context[i * 2] = imagePrompt(rows[i]!.user_message, buffers)
           remaining -= buffers.length
         }
+        let documentSlots = 3 - documents.length
+        for (let i = rows.length - 1; i >= 0 && documentSlots > 0; i--) {
+          const ids = rows[i]!.documents.slice(-documentSlots).map((d) => d.id)
+          if (!ids.length) continue
+          const stored = await client.query<{
+            id: string
+            name: string
+            data: Buffer
+            text_content: string | null
+          }>(
+            'SELECT id, name, data, text_content FROM message_documents WHERE session_id=$1 AND id=ANY($2::uuid[])',
+            [sessionId, ids],
+          )
+          const attached = ids.flatMap((id) =>
+            stored.rows
+              .filter((d) => d.id === id && (supportsDocuments || d.text_content !== null))
+              .map((d) => ({
+                name: d.name,
+                data: d.data,
+                text: d.text_content ?? undefined,
+                hash: '',
+              })),
+          )
+          context[i * 2] = documentPrompt(context[i * 2]!, attached)
+          documentSlots -= attached.length
+        }
         const answer = await generate([
           ...context,
-          imagePrompt(
-            text,
-            images.map((image) => image.data),
+          documentPrompt(
+            imagePrompt(
+              text,
+              images.map((image) => image.data),
+            ),
+            documents,
           ),
         ])
         const imageIds: string[] = []
@@ -155,10 +201,19 @@ export function createStore(databaseUrl: string) {
           ])
           imageIds.push(id)
         }
+        const documentMetadata: { id: string; name: string }[] = []
+        for (const document of documents) {
+          const id = randomUUID()
+          await client.query(
+            'INSERT INTO message_documents(id,session_id,name,data,text_content) VALUES($1,$2,$3,$4,$5)',
+            [id, sessionId, document.name, document.data, document.text ?? null],
+          )
+          documentMetadata.push({ id, name: document.name })
+        }
         // Use the same server clock for both timestamps: the Docker host may have a different clock.
         const result = await client.query<Message>(
-          `INSERT INTO messages(session_id, request_id, user_message, ai_message, sent_at, created_at, image_ids, image_hashes)
-           VALUES($1,$2,$3,$4,$5,timezone('UTC', $6::timestamptz),$7,$8) RETURNING ${columns}`,
+          `INSERT INTO messages(session_id, request_id, user_message, ai_message, sent_at, created_at, image_ids, image_hashes, documents, document_hashes)
+           VALUES($1,$2,$3,$4,$5,timezone('UTC', $6::timestamptz),$7,$8,$9,$10) RETURNING ${columns}`,
           [
             sessionId,
             requestId,
@@ -168,6 +223,8 @@ export function createStore(databaseUrl: string) {
             new Date(),
             imageIds,
             images.map((image) => image.hash),
+            JSON.stringify(documentMetadata),
+            documents.map((d) => d.hash),
           ],
         )
         await client.query('COMMIT')

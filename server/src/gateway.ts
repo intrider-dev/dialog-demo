@@ -1,10 +1,16 @@
+import type { PreparedDocument } from './documents.js'
 import type { Config } from './config.js'
 import { HttpError } from './errors.js'
 
 export type Prompt = {
   role: 'user' | 'assistant'
   content:
-    string | ({ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } })[]
+    | string
+    | (
+        | { type: 'text'; text: string }
+        | { type: 'image_url'; image_url: { url: string } }
+        | { type: 'file'; file: { filename: string; file_data: string } }
+      )[]
 }
 
 export function imagePrompt(text: string, images: Buffer[]): Prompt {
@@ -22,6 +28,31 @@ export function imagePrompt(text: string, images: Buffer[]): Prompt {
   }
 }
 
+export function documentPrompt(prompt: Prompt, documents: PreparedDocument[]): Prompt {
+  if (!documents.length) return prompt
+  const content =
+    typeof prompt.content === 'string'
+      ? [{ type: 'text' as const, text: prompt.content || 'Изучи вложенные документы.' }]
+      : prompt.content
+  return {
+    role: prompt.role,
+    content: [
+      ...content,
+      ...documents.map((document) =>
+        document.text !== undefined
+          ? { type: 'text' as const, text: `Документ: ${document.name}\n${document.text}` }
+          : {
+              type: 'file' as const,
+              file: {
+                filename: document.name,
+                file_data: `data:application/pdf;base64,${document.data.toString('base64')}`,
+              },
+            },
+      ),
+    ],
+  }
+}
+
 export async function complete(
   messages: Prompt[],
   config: Pick<Config, 'baseUrl' | 'apiKey' | 'model' | 'timeoutMs'>,
@@ -31,7 +62,16 @@ export async function complete(
       method: 'POST',
       redirect: 'error',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify({ model: config.model, messages, max_tokens: 1000 }),
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        max_tokens: 1000,
+        ...(messages.some(
+          (m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'file'),
+        )
+          ? { plugins: [{ id: 'file-parser', pdf: { engine: 'native' } }] }
+          : {}),
+      }),
       signal: AbortSignal.timeout(config.timeoutMs),
     })
     if (!response.ok) {

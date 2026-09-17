@@ -1,4 +1,5 @@
 import type { Message, Session, Pending } from '@/types/chat'
+import { isDocument } from './documents'
 import { isImageData } from './images'
 export class ApiError extends Error {
   code: string
@@ -18,6 +19,16 @@ export function isMessage(value: unknown): value is Message {
       (Array.isArray(m.image_ids) &&
         m.image_ids.length <= 3 &&
         m.image_ids.every((id) => /^[0-9a-f-]{36}$/i.test(id)))) &&
+    (m.documents === undefined ||
+      (Array.isArray(m.documents) &&
+        m.documents.length <= 3 &&
+        m.documents.every(
+          (d) =>
+            d &&
+            typeof d.name === 'string' &&
+            d.name.length <= 200 &&
+            /^[0-9a-f-]{36}$/i.test(d.id),
+        ))) &&
     typeof m.created_at === 'string' &&
     Number.isFinite(Date.parse(m.created_at)) &&
     (m.sent_at == null ||
@@ -51,6 +62,10 @@ export function pendingRequest(id: string): Pending | null {
         (Array.isArray(data.images) &&
           data.images.length <= 3 &&
           data.images.every(isImageData))) &&
+      (data.documents === undefined ||
+        (Array.isArray(data.documents) &&
+          data.documents.length <= 3 &&
+          data.documents.every(isDocument))) &&
       (data.model === undefined || (typeof data.model === 'string' && data.model.length <= 256)) &&
       data.message.length <= 4000
       ? data

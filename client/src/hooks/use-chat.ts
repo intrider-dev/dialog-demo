@@ -1,3 +1,4 @@
+import type { DocumentAttachment } from '@/lib/documents'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
@@ -15,6 +16,7 @@ export function useChat() {
   const [session, setSession] = useState<Session | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
+  const [documents, setDocuments] = useState<DocumentAttachment[]>([])
   const [images, setImages] = useState<string[]>([])
   const [pending, setPending] = useState<PendingMessage | null>(null)
   const [busy, setBusy] = useState(false)
@@ -44,6 +46,7 @@ export function useChat() {
         setReady(false)
         setDraft('')
         setImages([])
+        setDocuments([])
       }
       loadedSession.current = current.sessionId
       setSession(current)
@@ -77,10 +80,12 @@ export function useChat() {
         if (restoreDraft) {
           setDraft('')
           setImages([])
+          setDocuments([])
         }
       } else if (unfinished && restoreDraft) {
         setDraft(unfinished.message)
         setImages(unfinished.images ?? [])
+        setDocuments(unfinished.documents ?? [])
       }
       setReady(true)
     } catch (e) {
@@ -116,7 +121,7 @@ export function useChat() {
       !session?.configured ||
       !ready ||
       lock.current ||
-      (!draft.trim() && !images.length) ||
+      (!draft.trim() && !images.length && !documents.length) ||
       draft.length > 4000
     )
       return
@@ -130,21 +135,24 @@ export function useChat() {
     const request =
       previous?.message === text &&
       previous.model === model &&
-      JSON.stringify(previous.images ?? []) === JSON.stringify(images)
+      JSON.stringify(previous.images ?? []) === JSON.stringify(images) &&
+      JSON.stringify(previous.documents ?? []) === JSON.stringify(documents)
         ? previous
         : {
             requestId: crypto.randomUUID(),
             message: text,
             ...(model ? { model } : {}),
             ...(images.length ? { images } : {}),
+            ...(documents.length ? { documents } : {}),
           }
     savePending(session.sessionId, request)
     retry.current = { sessionId: session.sessionId, request }
     setBusy(true)
     setError('')
-    setPending({ text, sentAt: new Date().toISOString(), images })
+    setPending({ text, sentAt: new Date().toISOString(), images, documents })
     setDraft('')
     setImages([])
+    setDocuments([])
     try {
       const result = await api<{ sessionId: string; message: Message }>(
         'messages',
@@ -165,6 +173,7 @@ export function useChat() {
     } catch (e) {
       setDraft(text)
       setImages(images)
+      setDocuments(documents)
       setError(e instanceof Error ? e.message : 'Ошибка соединения.')
       if (e instanceof ApiError && e.code === 'SESSION_CHANGED') {
         setSession(null)
@@ -191,6 +200,7 @@ export function useChat() {
       setMessages([])
       setDraft('')
       setImages([])
+      setDocuments([])
       setAnimateId(null)
       retry.current = null
       save(current.sessionId, [])
@@ -218,6 +228,11 @@ export function useChat() {
     setDraft,
     images,
     setImages,
+    documents,
+    setDocuments,
+    addDocuments: (sessionId: string, added: DocumentAttachment[]) => {
+      if (loadedSession.current === sessionId) setDocuments((current) => [...current, ...added])
+    },
     addImages: (sessionId: string, added: string[]) => {
       // Ignore file reads that finish after another tab has changed the session.
       if (loadedSession.current === sessionId) setImages((current) => [...current, ...added])

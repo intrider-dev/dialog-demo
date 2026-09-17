@@ -9,6 +9,7 @@ import type { Store } from './db.js'
 import { complete, type Prompt } from './gateway.js'
 import { HttpError } from './errors.js'
 import { createModelCatalog } from './models.js'
+import { prepareDocuments } from './documents.js'
 import { prepareImages } from './images.js'
 
 export const isUuid = (value: unknown): value is string =>
@@ -98,7 +99,7 @@ export function createApp(
     const sessionId = isUuid(cookie) ? cookie : randomUUID()
     if (bootstrap) res.cookie('session_id', `${sessionId}.${Date.now()}`, cookieOptions)
     else if (
-      !(req.method === 'GET' && /^\/images\/[0-9a-f-]{36}$/i.test(req.path)) &&
+      !(req.method === 'GET' && /^\/(?:images|documents)\/[0-9a-f-]{36}$/i.test(req.path)) &&
       req.get('X-Session-Id') !== sessionId
     )
       throw new HttpError(
@@ -109,7 +110,7 @@ export function createApp(
     res.locals.sessionId = sessionId
     next()
   })
-  const messageBody = express.json({ limit: '9mb', inflate: false })
+  const messageBody = express.json({ limit: '30mb', inflate: false })
   const smallBody = express.json({ limit: '24kb', inflate: false })
   app.use((req, res, next) =>
     (req.path === '/api/messages' ? messageBody : smallBody)(req, res, next),
@@ -120,6 +121,12 @@ export function createApp(
     const data = await store.image(res.locals.sessionId, req.params.id)
     if (!data) throw new HttpError(404, 'Изображение не найдено.')
     res.type('image/webp').send(data)
+  })
+  app.get('/api/documents/:id', async (req, res) => {
+    if (!isUuid(req.params.id)) throw new HttpError(404, 'Документ не найден.')
+    const document = await store.document(res.locals.sessionId, req.params.id)
+    if (!document) throw new HttpError(404, 'Документ не найден.')
+    res.attachment(document.name).type('application/octet-stream').send(document.data)
   })
   app.get('/api/session', (_req, res) =>
     res.json({ sessionId: res.locals.sessionId, configured: Boolean(config.apiKey) }),
@@ -145,14 +152,16 @@ export function createApp(
       message: { error: 'Слишком много сообщений. Подождите минуту.' },
     }),
     async (req, res) => {
-      const { message, requestId, model, images } = req.body ?? {}
-      if (!images && Buffer.byteLength(JSON.stringify(req.body ?? {})) > 24 * 1024)
+      const { message, requestId, model, images, documents } = req.body ?? {}
+      if (!images && !documents && Buffer.byteLength(JSON.stringify(req.body ?? {})) > 24 * 1024)
         throw new HttpError(413, 'Слишком большой запрос.')
       if (model !== undefined && (typeof model !== 'string' || !model || model.length > 256))
         throw new HttpError(400, 'Выберите модель из списка.')
       if (
         typeof message !== 'string' ||
-        (!message.trim() && !(Array.isArray(images) && images.length)) ||
+        (!message.trim() &&
+          !(Array.isArray(images) && images.length) &&
+          !(Array.isArray(documents) && documents.length)) ||
         message.length > 4000 ||
         !isUuid(requestId)
       )
@@ -163,15 +172,21 @@ export function createApp(
       try {
         const selectedModel = model ?? config.model
         const selected =
-          model !== undefined || images?.length
+          model !== undefined || images?.length || documents?.length
             ? (await listModels()).find((item) => item.id === selectedModel)
             : undefined
-        if ((model !== undefined || images?.length) && !selected)
+        if ((model !== undefined || images?.length || documents?.length) && !selected)
           throw new HttpError(400, 'Модель недоступна. Обновите список моделей.')
         if (Array.isArray(images) && images.length && !selected?.supportsImages)
           throw new HttpError(
             400,
             'Эта модель не принимает изображения. Выберите модель с пометкой «Изображения».',
+          )
+        const preparedDocuments = prepareDocuments(documents)
+        if (preparedDocuments.some((d) => d.text === undefined) && !selected?.supportsDocuments)
+          throw new HttpError(
+            400,
+            'Эта модель не принимает PDF. Выберите модель со значком документа.',
           )
         const prepared = await prepareImages(images)
         const result = await store.reply(
@@ -182,6 +197,8 @@ export function createApp(
           config.dailyLimit,
           prepared,
           Boolean(selected?.supportsImages),
+          preparedDocuments,
+          Boolean(selected?.supportsDocuments),
         )
         res.status(201).json({ sessionId: res.locals.sessionId, message: result })
       } finally {

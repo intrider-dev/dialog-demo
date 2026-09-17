@@ -1,17 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, MessageSquare, Plus, ImagePlus, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  MessageSquare,
+  Plus,
+  ImagePlus,
+  FilePlus2,
+  FileText,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useChat } from '@/hooks/use-chat'
 import { MessagePair, PendingReply } from '@/components/chat/message-pair'
 import { ModelPicker } from '@/components/chat/model-picker'
+import { documentAccept, readDocument, type DocumentAttachment } from '@/lib/documents'
 import { imageAccept, readImage } from '@/lib/images'
 
 function App() {
   const [model, setModel] = useState<string>()
   const [supportsImages, setSupportsImages] = useState(false)
-  const chooseModel = useCallback((id: string, supported = false) => {
+  const [supportsDocuments, setSupportsDocuments] = useState(false)
+  const documentInput = useRef<HTMLInputElement>(null)
+  const chooseModel = useCallback((id: string, supported = false, documentsSupported = false) => {
     setModel(id)
     setSupportsImages(supported)
+    setSupportsDocuments(documentsSupported)
   }, [])
   const [readingImages, setReadingImages] = useState(false)
   const [imageError, setImageError] = useState('')
@@ -25,6 +38,9 @@ function App() {
     images,
     setImages,
     addImages,
+    documents,
+    setDocuments,
+    addDocuments,
     pending,
     busy,
     ready,
@@ -37,11 +53,21 @@ function App() {
   async function attach(files: File[]) {
     if (!files.length || busy || !ready || !session || readingLock.current) return
     setImageError('')
-    if (!supportsImages) {
+    const documentFiles = files.filter((file) => /\.(pdf|txt|md|csv|json)$/i.test(file.name))
+    const imageFiles = files.filter((file) => !documentFiles.includes(file))
+    if (documentFiles.some((file) => /\.pdf$/i.test(file.name)) && !supportsDocuments) {
+      setImageError('Выберите модель со значком документа для отправки PDF.')
+      return
+    }
+    if (documents.length + documentFiles.length > 3) {
+      setImageError('Можно прикрепить до 3 документов.')
+      return
+    }
+    if (imageFiles.length && !supportsImages) {
       setImageError('Выберите модель с пометкой «Изображения».')
       return
     }
-    if (images.length + files.length > 3) {
+    if (images.length + imageFiles.length > 3) {
       setImageError('Можно прикрепить до 3 изображений.')
       return
     }
@@ -49,7 +75,10 @@ function App() {
     setReadingImages(true)
     try {
       const loaded: string[] = []
-      for (const file of files) loaded.push(await readImage(file))
+      const loadedDocuments: DocumentAttachment[] = []
+      for (const file of documentFiles) loadedDocuments.push(await readDocument(file))
+      for (const file of imageFiles) loaded.push(await readImage(file))
+      addDocuments(session.sessionId, loadedDocuments)
       addImages(session.sessionId, loaded)
     } catch (error) {
       setImageError(error instanceof Error ? error.message : 'Не удалось загрузить файл.')
@@ -59,7 +88,11 @@ function App() {
     }
   }
   function submit() {
-    if (!readingLock.current && (!images.length || supportsImages)) {
+    if (
+      !readingLock.current &&
+      (!images.length || supportsImages) &&
+      (!documents.some((d) => /\.pdf$/i.test(d.name)) || supportsDocuments)
+    ) {
       following.current = true
       void send(model)
     }
@@ -214,6 +247,7 @@ function App() {
             onChange={chooseModel}
             disabled={busy || readingImages}
             requireImages={images.length > 0}
+            requireDocuments={documents.some((d) => /\.pdf$/i.test(d.name))}
           />
           <div className="composer rounded-2xl border bg-background p-3 shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
             {!!images.length && (
@@ -238,6 +272,32 @@ function App() {
                 ))}
               </div>
             )}
+            {!!documents.length && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {documents.map((document, index) => (
+                  <div
+                    key={index}
+                    className="flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-xs"
+                  >
+                    <FileText className="size-4 shrink-0" aria-hidden="true" />
+                    <span className="truncate" title={document.name}>
+                      {document.name}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Удалить документ ${document.name}`}
+                      disabled={busy || readingImages}
+                      onClick={() =>
+                        setDocuments((current) => current.filter((_, i) => i !== index))
+                      }
+                      className="flex size-6 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <X className="size-3" aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             {imageError && (
               <p role="alert" className="mb-2 text-xs text-destructive">
                 {imageError}
@@ -245,7 +305,7 @@ function App() {
             )}
             {readingImages && (
               <p role="status" className="mb-2 text-xs text-muted-foreground">
-                Подготавливаю изображения…
+                Подготавливаю вложения…
               </p>
             )}
             <label htmlFor="message" className="sr-only">
@@ -301,6 +361,38 @@ function App() {
                 >
                   <ImagePlus aria-hidden="true" />
                 </Button>
+                <input
+                  ref={documentInput}
+                  type="file"
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-label="Выбрать документы"
+                  accept={documentAccept}
+                  multiple
+                  disabled={busy || !ready || readingImages}
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? [])
+                    event.target.value = ''
+                    if (files.some((file) => !/\.(pdf|txt|md|csv|json)$/i.test(file.name))) {
+                      setImageError(
+                        'Поддерживаются PDF, TXT, MD, CSV и JSON. Другой документ сохраните в PDF.',
+                      )
+                      return
+                    }
+                    void attach(files)
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Прикрепить документы"
+                  title="До 3 документов по 5 МБ: PDF, TXT, MD, CSV, JSON. Текст до 20 000 символов. Для PDF выберите модель со значком документа."
+                  disabled={busy || !ready || readingImages || documents.length >= 3}
+                  onClick={() => documentInput.current?.click()}
+                >
+                  <FilePlus2 aria-hidden="true" />
+                </Button>
                 <span className="text-xs text-muted-foreground">
                   Enter отправить · Shift + Enter перенос
                 </span>
@@ -314,8 +406,9 @@ function App() {
                   !ready ||
                   busy ||
                   readingImages ||
-                  (!draft.trim() && !images.length) ||
-                  (!!images.length && !supportsImages)
+                  (!draft.trim() && !images.length && !documents.length) ||
+                  (!!images.length && !supportsImages) ||
+                  (documents.some((d) => /\.pdf$/i.test(d.name)) && !supportsDocuments)
                 }
               >
                 <ArrowUp aria-hidden="true" />
