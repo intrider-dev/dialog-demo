@@ -48,7 +48,8 @@ function App() {
     readingLock.current = true
     setReadingImages(true)
     try {
-      const loaded = await Promise.all(files.map(readImage))
+      const loaded: string[] = []
+      for (const file of files) loaded.push(await readImage(file))
       addImages(session.sessionId, loaded)
     } catch (error) {
       setImageError(error instanceof Error ? error.message : 'Не удалось загрузить файл.')
@@ -244,7 +245,7 @@ function App() {
             )}
             {readingImages && (
               <p role="status" className="mb-2 text-xs text-muted-foreground">
-                Читаю изображения…
+                Подготавливаю изображения…
               </p>
             )}
             <label htmlFor="message" className="sr-only">
@@ -290,7 +291,7 @@ function App() {
                   aria-label="Прикрепить изображения"
                   title={
                     supportsImages
-                      ? 'До 3 изображений по 2 МБ. Можно вставить из буфера.'
+                      ? 'До 3 изображений. Большие файлы сжимаются автоматически. Можно вставить из буфера.'
                       : 'Выберите модель с пометкой «Изображения»'
                   }
                   disabled={

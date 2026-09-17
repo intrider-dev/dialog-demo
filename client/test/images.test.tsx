@@ -1,12 +1,18 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import App from '../src/App'
 import { isImageData, readImage } from '../src/lib/images'
 import { useChat } from '../src/hooks/use-chat'
 import { pendingRequest } from '../src/lib/chat'
 
 const image = 'data:image/png;base64,iVBORw0KGgo='
+beforeEach(() => {
+  vi.stubGlobal(
+    'createImageBitmap',
+    vi.fn(async () => ({ width: 100, height: 100, close: vi.fn() })),
+  )
+})
 const file = () =>
   new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], 'picture.png', {
     type: 'image/png',
@@ -39,18 +45,83 @@ function mockApi(supportsImages = true) {
   return { fetch, sessionId }
 }
 
-it('reads supported files and rejects unsupported, empty and oversized files', async () => {
+it('reads small supported files and rejects empty or undecodable files', async () => {
   expect(await readImage(file())).toBe(image)
   expect(isImageData('https://example.com/image.png')).toBe(false)
   expect(isImageData(null)).toBe(false)
   expect(isImageData('data:image/svg+xml;base64,YQ==')).toBe(false)
-  for (const bad of [
-    new File(['x'], 'x.svg', { type: 'image/svg+xml' }),
-    new File([], 'empty.png', { type: 'image/png' }),
-    new File([new Uint8Array(2 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' }),
-  ]) {
-    await expect(readImage(bad)).rejects.toBeInstanceOf(Error)
-  }
+  await expect(readImage(new File([], 'empty.png', { type: 'image/png' }))).rejects.toThrow(
+    'пустое',
+  )
+  vi.mocked(createImageBitmap).mockRejectedValueOnce(new Error('decode'))
+  await expect(readImage(new File(['x'], 'broken.jpg'))).rejects.toThrow('Не удалось открыть')
+})
+
+it('compresses large photos without cropping, tries lossless first and releases decoded pixels', async () => {
+  const close = vi.fn()
+  vi.mocked(createImageBitmap).mockResolvedValue({
+    width: 6000,
+    height: 4000,
+    close,
+  } as unknown as ImageBitmap)
+  const drawImage = vi.fn()
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    drawImage,
+  } as unknown as CanvasRenderingContext2D)
+  const encode = vi
+    .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+    .mockImplementation((callback, type) => {
+      callback(new Blob([new Uint8Array(type === 'image/png' ? 3 * 1024 * 1024 : 100)], { type }))
+    })
+  const result = await readImage(
+    new File([new Uint8Array(4 * 1024 * 1024)], 'photo.jpg', { type: 'image/jpeg' }),
+  )
+  expect(result).toMatch(/^data:image\/webp;base64,/)
+  expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, 2048, 1365)
+  expect(encode.mock.calls.map(([, type, quality]) => [type, quality])).toEqual([
+    ['image/png', undefined],
+    ['image/webp', 0.95],
+  ])
+  expect(close).toHaveBeenCalledOnce()
+})
+
+it('reduces dimensions when encoding alone cannot fit and converts other decoded formats', async () => {
+  vi.mocked(createImageBitmap).mockResolvedValue({
+    width: 2048,
+    height: 1024,
+    close: vi.fn(),
+  } as unknown as ImageBitmap)
+  const drawImage = vi.fn()
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    drawImage,
+    fillRect: vi.fn(),
+  } as unknown as CanvasRenderingContext2D)
+  vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function (callback, type) {
+    callback(new Blob([new Uint8Array(this.width === 2048 ? 3 * 1024 * 1024 : 100)], { type }))
+  })
+  expect(await readImage(new File(['pixels'], 'picture.avif', { type: 'image/avif' }))).toMatch(
+    /^data:image\/png/,
+  )
+  expect(drawImage).toHaveBeenLastCalledWith(expect.anything(), 0, 0, 1638, 819)
+})
+
+it('reports unavailable canvas and encoding failures', async () => {
+  const source = new File(['pixels'], 'picture.bmp', { type: 'image/bmp' })
+  const context = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+  await expect(readImage(source)).rejects.toThrow('Не удалось подготовить')
+  context.mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D)
+  const encode = vi
+    .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+    .mockImplementation((callback) => callback(null))
+  await expect(readImage(source)).rejects.toThrow('Не удалось сжать')
+  context.mockReturnValue({
+    drawImage: vi.fn(),
+    fillRect: vi.fn(),
+  } as unknown as CanvasRenderingContext2D)
+  encode.mockImplementation((callback, type) =>
+    callback(new Blob([new Uint8Array(3 * 1024 * 1024)], { type })),
+  )
+  await expect(readImage(source)).rejects.toThrow('для отправки')
 })
 
 it('selects files, previews and removes them, pastes pictures and sends image-only messages', async () => {
@@ -95,10 +166,11 @@ it('blocks attachments for text-only models and rejects too many files', async (
   await userEvent.upload(picker, [file(), file(), file(), file()])
   expect(screen.getByRole('alert')).toHaveTextContent('до 3 изображений')
   expect(screen.queryByAltText('Вложение 1')).not.toBeInTheDocument()
+  vi.mocked(createImageBitmap).mockRejectedValueOnce(new Error('decode'))
   fireEvent.change(picker, {
     target: { files: [new File(['text'], 'note.txt', { type: 'text/plain' })] },
   })
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('PNG, JPEG'))
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('PNG или JPEG'))
 })
 
 it('keeps a selected file when returning from the file dialog triggers a slow history refresh', async () => {

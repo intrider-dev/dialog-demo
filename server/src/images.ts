@@ -30,12 +30,16 @@ export async function prepareImages(value: unknown): Promise<PreparedImage[]> {
       const metadata = await decoder.metadata()
       if (!['png', 'jpeg', 'webp', 'gif'].includes(metadata.format ?? ''))
         throw new Error('Invalid format')
-      const data = await decoder
+      const resized = decoder
         .rotate()
-        .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 80 })
-        .toBuffer()
-      if (data.length > 1024 * 1024) throw new Error('Image too large')
+        .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
+      let data = await resized.clone().webp({ lossless: true }).toBuffer()
+      // Keep lossless output when it fits; reduce quality only as much as needed.
+      for (const quality of [95, 90, 85, 80]) {
+        if (data.length <= 2 * 1024 * 1024) break
+        data = await resized.clone().webp({ quality }).toBuffer()
+      }
+      if (data.length > 2 * 1024 * 1024) throw new Error('Image too large')
       result.push({ data, hash: createHash('sha256').update(input).digest('hex') })
     } catch {
       throw new HttpError(400, 'Не удалось прочитать изображение. Выберите другой файл.')
