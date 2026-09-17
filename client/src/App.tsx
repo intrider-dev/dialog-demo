@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, MessageSquare, Plus, ImagePlus, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, MessageSquare, Plus, ImagePlus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useChat } from '@/hooks/use-chat'
 import { MessagePair, PendingReply } from '@/components/chat/message-pair'
@@ -58,19 +58,38 @@ function App() {
     }
   }
   function submit() {
-    if (!readingLock.current && (!images.length || supportsImages)) void send(model)
+    if (!readingLock.current && (!images.length || supportsImages)) {
+      following.current = true
+      void send(model)
+    }
   }
+  const following = useRef(true)
+  const [showScrollDown, setShowScrollDown] = useState(false)
   const bottom = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => {
+  function scrollDown(smooth = true) {
+    following.current = true
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     bottom.current?.scrollIntoView({
       block: 'end',
-      behavior: animateId && !reduced ? 'smooth' : 'instant',
+      behavior: smooth && !reduced ? 'smooth' : 'instant',
     })
+  }
+  function trackScroll(event: React.UIEvent<HTMLElement>) {
+    const { scrollHeight, clientHeight, scrollTop } = event.currentTarget
+    const nearBottom = scrollHeight - clientHeight - scrollTop < 80
+    following.current = nearBottom
+    setShowScrollDown(!nearBottom)
+  }
+  useEffect(() => {
+    following.current = true
+    scrollDown(false)
+  }, [session?.sessionId])
+  useEffect(() => {
+    if (following.current) scrollDown(Boolean(animateId))
   }, [messages, pending, error, animateId])
   useEffect(() => {
-    if (!busy && ready) input.current?.focus()
+    if (!busy && ready) input.current?.focus({ preventScroll: true })
   }, [busy, ready])
 
   return (
@@ -93,7 +112,12 @@ function App() {
           </Button>
         </div>
       </header>
-      <main className="flex-1 overflow-y-auto px-4 sm:px-8" aria-label="Переписка">
+      <main
+        id="chat-messages"
+        className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-8"
+        aria-label="Переписка"
+        onScroll={trackScroll}
+      >
         <div className="mx-auto max-w-3xl py-8">
           {!messages.length && !pending && (
             <div className="py-12 sm:py-20">
@@ -152,7 +176,20 @@ function App() {
           <div ref={bottom} />
         </div>
       </main>
-      <footer className="px-4 pb-4 pt-3 sm:px-8">
+      <footer className="chat-footer relative z-10 bg-background px-4 pb-4 pt-3 sm:px-8">
+        {showScrollDown && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="absolute -top-12 left-1/2 -translate-x-1/2 rounded-full bg-background shadow-md"
+            aria-label="К последним сообщениям"
+            aria-controls="chat-messages"
+            onClick={() => scrollDown()}
+          >
+            <ArrowDown aria-hidden="true" />
+          </Button>
+        )}
         <form
           className="mx-auto max-w-3xl"
           onSubmit={(event) => {

@@ -5,6 +5,17 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.chat-footer::before {
+  content: '';
+  position: absolute;
+  inset: -24px 0 auto;
+  height: 24px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--background));
+  backdrop-filter: blur(4px);
+  mask-image: linear-gradient(to bottom, transparent, black);
+}
+
 .composer {
   transition:
     box-shadow 160ms ease-out,

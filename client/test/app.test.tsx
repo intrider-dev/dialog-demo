@@ -42,6 +42,41 @@ async function mounted() {
   return hook
 }
 describe('chat screen', () => {
+  it('preserves reading position on refresh and returns to the latest messages', async () => {
+    const fetch = mockApi()
+    render(<App />)
+    await waitFor(() => expect(screen.getByRole('textbox')).toBeEnabled())
+    const main = screen.getByRole('main')
+    Object.defineProperties(main, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, writable: true, value: 900 },
+    })
+    fireEvent.scroll(main)
+    expect(screen.getByRole('button', { name: 'К последним сообщениям' })).toBeVisible()
+    vi.mocked(Element.prototype.scrollIntoView).mockClear()
+    const calls = fetch.mock.calls.length
+    fireEvent.focus(window)
+    await waitFor(() => expect(fetch.mock.calls.length).toBeGreaterThan(calls))
+    await act(async () => {})
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'К последним сообщениям' }))
+    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({
+      block: 'end',
+      behavior: 'smooth',
+    })
+    main.scrollTop = 1500
+    fireEvent.scroll(main)
+    expect(screen.queryByRole('button', { name: 'К последним сообщениям' })).not.toBeInTheDocument()
+    main.scrollTop = 800
+    fireEvent.scroll(main)
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList)
+    await userEvent.click(screen.getByRole('button', { name: 'К последним сообщениям' }))
+    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({
+      block: 'end',
+      behavior: 'instant',
+    })
+  })
   it('sends via Enter, renders responses as text, saves history and starts a fresh dialog', async () => {
     mockApi()
     const user = userEvent.setup()
